@@ -1,0 +1,8 @@
+.build/
+.swiftpm/
+bench-out/
+dist/
+*.wav
+*.aiff
+*.bin
+.DS_Store
