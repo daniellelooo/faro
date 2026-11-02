@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import CoreGraphics
 import FaroCore
+import IOKit.pwr_mgt
 
 /// Decide si la píldora en reposo estorba: app en pantalla completa o app de video al frente.
 @MainActor
@@ -39,15 +40,60 @@ enum PillVisibility {
 
   /// En apps de video siempre; en un navegador en pantalla completa con YouTube, Netflix o similar, también; en el resto de pantallas completas solo si se pide (en la isla el notch queda libre
   /// en pantalla completa, así que por defecto se sigue viendo).
-  static func shouldHide(inFullscreen: Bool) -> Bool {
+  static func shouldHide(inFullscreen: Bool, islandScreen: NSScreen?) -> Bool {
+    frontAppHides(inFullscreen: inFullscreen) || (islandScreen.map(videoCovers) ?? false)
+  }
+
+  /// Un video en pantalla completa en esa pantalla aunque el foco esté en otra app, por ejemplo en la otra pantalla.
+  private static func videoCovers(_ screen: NSScreen) -> Bool {
+    NSWorkspace.shared.runningApplications.contains { app in
+      guard let id = app.bundleIdentifier, browsers.contains(id) else { return false }
+      return window(of: app.processIdentifier, covers: screen) && keepsDisplayAwake(pid: app.processIdentifier)
+    }
+  }
+
+  private static func frontAppHides(inFullscreen: Bool) -> Bool {
     guard let app = NSWorkspace.shared.frontmostApplication else { return false }
     if let id = app.bundleIdentifier, videoApps.contains(id) { return true }
-    guard isFullscreen(pid: app.processIdentifier) else { return false }
+    let pid = app.processIdentifier
+    let browser = app.bundleIdentifier.map(browsers.contains) ?? false
+    guard isFullscreen(pid: pid) || (browser && focusedWindowIsFullscreen(pid: pid)) else { return false }
     if inFullscreen { return true }
-    if let id = app.bundleIdentifier, browsers.contains(id), let title = focusedWindowTitle(pid: app.processIdentifier) {
-      return VideoSites.isWatching(title: title)
+    guard browser else { return false }
+    let title = focusedWindowTitle(pid: pid) ?? ""
+    if VideoSites.isWatching(title: title) { return true }
+    // Arc puede dejar el título sin el sitio ("(2) Nombre del video"). Un video en reproducción mantiene la pantalla
+    // encendida; se recuerda el título para que la isla no vuelva a salir al pausarlo.
+    if !title.isEmpty, title == lastVideoTitle { return true }
+    guard keepsDisplayAwake(pid: pid) else { return false }
+    lastVideoTitle = title
+    return true
+  }
+
+  private static var lastVideoTitle: String?
+
+  /// La app tiene pedido al sistema que no se apague la pantalla (no necesita ningún permiso).
+  static func keepsDisplayAwake(pid: pid_t) -> Bool {
+    var out: Unmanaged<CFDictionary>?
+    guard IOPMCopyAssertionsByProcess(&out) == kIOReturnSuccess, let all = out?.takeRetainedValue() as NSDictionary?,
+      let assertions = all[NSNumber(value: pid)] as? [[String: Any]]
+    else { return false }
+    return assertions.contains { a in
+      guard let type = a["AssertType"] as? String else { return false }
+      return type == "NoDisplaySleepAssertion" || type == "PreventUserIdleDisplaySleep"
     }
-    return false
+  }
+
+  /// En la pantalla del Mac la ventana en pantalla completa queda debajo del notch y no mide lo que la pantalla.
+  static func focusedWindowIsFullscreen(pid: pid_t) -> Bool {
+    let app = AXUIElementCreateApplication(pid)
+    var window: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &window) == .success, let window
+    else { return false }
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(window as! AXUIElement, "AXFullScreen" as CFString, &value) == .success
+    else { return false }
+    return (value as? Bool) ?? false
   }
 
   /// Título de la ventana activa de la app (con Accesibilidad): en un navegador, el de la pestaña.
@@ -64,15 +110,20 @@ enum PillVisibility {
 
   /// Un navegador al frente con una ventana que ocupa exactamente esa pantalla.
   static func browserFullscreen(on screen: NSScreen) -> Bool {
-    guard let app = NSWorkspace.shared.frontmostApplication, let id = app.bundleIdentifier, browsers.contains(id),
-      let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]],
+    guard let app = NSWorkspace.shared.frontmostApplication, let id = app.bundleIdentifier, browsers.contains(id)
+    else { return false }
+    return window(of: app.processIdentifier, covers: screen)
+  }
+
+  private static func window(of pid: pid_t, covers screen: NSScreen) -> Bool {
+    guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]],
       let primary = NSScreen.screens.first
     else { return false }
     // CGWindow cuenta desde arriba de la pantalla principal; NSScreen, desde abajo.
     let target = CGRect(x: screen.frame.minX, y: primary.frame.height - screen.frame.maxY,
       width: screen.frame.width, height: screen.frame.height)
     return list.contains { w in
-      guard (w[kCGWindowOwnerPID as String] as? pid_t) == app.processIdentifier, (w[kCGWindowLayer as String] as? Int) == 0,
+      guard (w[kCGWindowOwnerPID as String] as? pid_t) == pid, (w[kCGWindowLayer as String] as? Int) == 0,
         let b = w[kCGWindowBounds as String] as? [String: CGFloat], let x = b["X"], let y = b["Y"],
         let width = b["Width"], let height = b["Height"]
       else { return false }

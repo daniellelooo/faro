@@ -107,7 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       self.scroll.gameInFront = playing
       self.overlay.idleSuppressed = playing
         || (self.settings.hidePillWhenWatching
-          && PillVisibility.shouldHide(inFullscreen: self.settings.hideInFullscreen || self.settings.indicatorStyle == .pill))
+          && PillVisibility.shouldHide(inFullscreen: self.settings.hideInFullscreen || self.settings.indicatorStyle == .pill, islandScreen: self.overlay.activeScreen))
     }
     NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { _ in
       MainActor.assumeIsolated { refreshPill() }
