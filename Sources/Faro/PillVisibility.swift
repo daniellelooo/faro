@@ -62,6 +62,24 @@ enum PillVisibility {
     return title as? String
   }
 
+  /// Un navegador al frente con una ventana que ocupa exactamente esa pantalla.
+  static func browserFullscreen(on screen: NSScreen) -> Bool {
+    guard let app = NSWorkspace.shared.frontmostApplication, let id = app.bundleIdentifier, browsers.contains(id),
+      let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]],
+      let primary = NSScreen.screens.first
+    else { return false }
+    // CGWindow cuenta desde arriba de la pantalla principal; NSScreen, desde abajo.
+    let target = CGRect(x: screen.frame.minX, y: primary.frame.height - screen.frame.maxY,
+      width: screen.frame.width, height: screen.frame.height)
+    return list.contains { w in
+      guard (w[kCGWindowOwnerPID as String] as? pid_t) == app.processIdentifier, (w[kCGWindowLayer as String] as? Int) == 0,
+        let b = w[kCGWindowBounds as String] as? [String: CGFloat], let x = b["X"], let y = b["Y"],
+        let width = b["Width"], let height = b["Height"]
+      else { return false }
+      return abs(x - target.minX) < 2 && abs(y - target.minY) < 2 && abs(width - target.width) < 2 && abs(height - target.height) < 2
+    }
+  }
+
   /// Una ventana normal de la app que ocupa toda una pantalla.
   static func isFullscreen(pid: pid_t) -> Bool {
     guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return false }

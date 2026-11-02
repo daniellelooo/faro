@@ -130,6 +130,9 @@ final class OverlayPanel {
   private var noticeTask: Task<Void, Never>?
   private var liveNoticeTask: Task<Void, Never>?
   private var hoverTask: Task<Void, Never>?
+  private var hoverIntent = HoverIntent()
+  private var browserFullscreenInBand: Bool?
+  private static let fullscreenEdgeHeight: CGFloat = 3
   private var monitors: [Any] = []
 
   static let panelSize = NSSize(width: 720, height: 320)
@@ -253,10 +256,17 @@ final class OverlayPanel {
   private func installHover() {
     let move: (NSEvent) -> Void = { [weak self] e in
       MainActor.assumeIsolated {
-        if e.type == .leftMouseDragged { self?.dragMoved(NSEvent.mouseLocation) }
-        self?.mouseMoved(NSEvent.mouseLocation)
+        let dragging = e.type == .leftMouseDragged
+        if dragging { self?.dragMoved(NSEvent.mouseLocation) }
+        self?.mouseMoved(NSEvent.mouseLocation, dragging: dragging)
       }
     }
+    // Un clic en la zona es para lo que hay debajo (la URL, una pestaña): la isla no se abre hasta que el puntero salga.
+    let press: (NSEvent) -> Void = { [weak self] _ in
+      MainActor.assumeIsolated { self?.pointerPressed() }
+    }
+    if let m = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown], handler: press) { monitors.append(m) }
+    if let m = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown], handler: { e in press(e); return e }) { monitors.append(m) }
     // Arrastrar archivos hacia el notch abre la bandeja. La isla solo sabe que hay un arrastre de archivos
     // comparando el portapapeles de arrastre con el que había al apretar el botón.
     if let m = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown], handler: { [weak self] _ in
@@ -297,7 +307,8 @@ final class OverlayPanel {
     guard let screen = activeScreen ?? NSScreen.main else { return .zero }
     // Con la isla en reposo visible, toda la isla (notch más hombros) responde al puntero.
     let w = max(state.notchWidth, 180) + (state.idleVisible ? 2 * state.idleShoulder + 10 : 30)
-    let h = max(state.notchHeight, 26) + 4
+    // Solo la franja de la barra de menú: un poco más abajo ya está la ventana (la barra de URL o las pestañas).
+    let h = max(state.notchHeight, 26)
     return NSRect(x: screen.frame.midX - w / 2, y: screen.frame.maxY - h, width: w, height: h)
   }
 
@@ -326,12 +337,47 @@ final class OverlayPanel {
     if state.hovering { state.hovering = false }
   }
 
-  private func mouseMoved(_ p: NSPoint) {
+  /// Durante una reunión la isla también se abre (para pausarla o terminarla); durante un dictado, no.
+  /// Viendo un video en pantalla completa tampoco: el puntero sube al borde para ver las pestañas, no la isla.
+  private var canOpenByHover: Bool {
+    style == .island && (!state.dictationActive || state.phase == .meeting)
+      && (!idleSuppressed || state.phase == .meeting)
+  }
+
+  private func cancelHoverWait() {
+    hoverTask?.cancel()
+    hoverTask = nil
+  }
+
+  private func setHovering(_ inside: Bool) {
+    guard inside != state.hovering else { return }
+    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { state.hovering = inside }
+    if inside { panel.orderFrontRegardless() }
+  }
+
+  /// Con un navegador en pantalla completa la franja de arriba es la barra de URL y las pestañas: ahí solo abre el
+  /// borde mismo de la pantalla. Se pregunta una vez al entrar a la franja, no en cada movimiento del puntero.
+  private func pointerInOpenZone(_ p: NSPoint) -> Bool {
+    // NSMouseInRect cuenta el píxel de más arriba, donde el puntero se queda pegado al subir; contains no.
+    guard NSMouseInRect(p, hotRect, false), let screen = activeScreen else {
+      browserFullscreenInBand = nil
+      return false
+    }
+    let fullscreen = browserFullscreenInBand ?? (state.phase != .meeting && PillVisibility.browserFullscreen(on: screen))
+    browserFullscreenInBand = fullscreen
+    return !fullscreen || p.y >= screen.frame.maxY - Self.fullscreenEdgeHeight
+  }
+
+  private func pointerPressed() {
+    guard !state.expanded, NSMouseInRect(NSEvent.mouseLocation, hotRect, false) else { return }
+    hoverIntent.block()
+    cancelHoverWait()
+    setHovering(false)
+  }
+
+  private func mouseMoved(_ p: NSPoint, dragging: Bool) {
     followPointerScreen()
-    // Durante una reunión la isla también se abre (para pausarla o terminarla); durante un dictado, no.
-    // Viendo un video en pantalla completa tampoco: el puntero sube al borde para ver las pestañas, no la isla.
-    guard style == .island, !state.dictationActive || state.phase == .meeting,
-      !idleSuppressed || state.phase == .meeting || state.expanded else { return }
+    guard canOpenByHover || state.expanded else { return }
     if state.expanded {
       if expandedRect.contains(p) {
         hoverTask?.cancel()
@@ -346,26 +392,32 @@ final class OverlayPanel {
       }
       return
     }
-    let inside = hotRect.contains(p)
-    if inside != state.hovering {
-      withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { state.hovering = inside }
-      if inside { panel.orderFrontRegardless() }
+    let inside = pointerInOpenZone(p)
+    // Un arrastre (seleccionar la URL, mover una pestaña) nunca abre la isla; los archivos van por dragMoved.
+    if dragging {
+      if inside { hoverIntent.block() }
+      cancelHoverWait()
+      setHovering(false)
+      return
     }
-    if inside {
-      guard hoverTask == nil else { return }
+    switch hoverIntent.moved(to: p, inside: inside) {
+    case .none: break
+    case .cancelWait: cancelHoverWait()
+    case .restartWait:
+      cancelHoverWait()
       hoverTask = Task { [weak self] in
-        try? await Task.sleep(for: .milliseconds(200))
+        try? await Task.sleep(for: .seconds(HoverIntent.dwell))
         guard !Task.isCancelled, let self else { return }
-        if self.hotRect.contains(NSEvent.mouseLocation) { self.expand() }
         self.hoverTask = nil
+        if self.canOpenByHover, self.pointerInOpenZone(NSEvent.mouseLocation) { self.expand() }
       }
-    } else {
-      hoverTask?.cancel()
-      hoverTask = nil
     }
+    setHovering(inside && !hoverIntent.blocked)
   }
 
   func expand() {
+    hoverIntent.reset()
+    cancelHoverWait()
     position()
     panel.ignoresMouseEvents = false
     panel.orderFrontRegardless()
