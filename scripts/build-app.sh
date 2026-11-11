@@ -57,3 +57,5 @@ pkill -x Dicta 2>/dev/null || true
 rm -rf /Applications/Dicta.app /Applications/Faro.app
 ditto "$APP" /Applications/Faro.app
 echo "Instalada en /Applications/Faro.app"
+# Volver a abrirla: si no, cada reinstalación la deja cerrada hasta que alguien se acuerde de abrirla.
+open /Applications/Faro.app
