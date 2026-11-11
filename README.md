@@ -111,6 +111,7 @@ Other scripts:
 | `scripts/test.sh` | Runs the test suite (`swift test` with the paths Swift Testing needs under the Command Line Tools). |
 | `scripts/bench.sh` | Dictation benchmark: synthesizes 70 Spanish phrases with the system voices and measures word error rate and latency through the full pipeline. Results in `docs/bench.md`. |
 | `scripts/make-icns.sh` | Rebuilds `Resources/AppIcon.icns`. |
+| `scripts/abrir-al-iniciar.sh` | Opens Faro at login with a LaunchAgent that survives reinstalls (optional, run once). |
 
 For development, `swift build` and `swift run Faro` also work.
 
