@@ -58,4 +58,4 @@ rm -rf /Applications/Dicta.app /Applications/Faro.app
 ditto "$APP" /Applications/Faro.app
 echo "Instalada en /Applications/Faro.app"
 # Volver a abrirla: si no, cada reinstalación la deja cerrada hasta que alguien se acuerde de abrirla.
-open /Applications/Faro.app
+sleep 1; open /Applications/Faro.app || { sleep 2; open /Applications/Faro.app; }

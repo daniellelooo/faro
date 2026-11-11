@@ -60,19 +60,82 @@ enum PillVisibility {
     guard isFullscreen(pid: pid) || (browser && focusedWindowIsFullscreen(pid: pid)) else { return false }
     if inFullscreen { return true }
     guard browser else { return false }
-    // Un navegador en pantalla completa es para navegar (Dia o Arc se usan así todo el día): la isla solo se oculta
-    // con un video reproduciéndose, que mantiene la pantalla encendida. El título por sí solo no basta: ocultaba la
-    // isla en cualquier página de YouTube. Se recuerda el título unos minutos para que no vuelva a salir al pausar.
-    let title = focusedWindowTitle(pid: pid) ?? ""
-    if keepsDisplayAwake(pid: pid) {
-      lastVideo = (title, Date())
-      return true
+    // Dia o Arc se usan en pantalla completa todo el día, así que eso no basta, ni el título, ni que suene un video.
+    // Un video en pantalla completa (o una presentación) hace que la página ocupe toda la ventana, sin pestañas ni
+    // barra de dirección: esa es la señal.
+    let fills = webAreaFillsWindow(pid: pid)
+    logBrowser(fills)
+    return fills
+  }
+
+  /// La página web ocupa toda la ventana activa del navegador (contenido en pantalla completa).
+  static func webAreaFillsWindow(pid: pid_t) -> Bool {
+    let app = AXUIElementCreateApplication(pid)
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &value) == .success, let value
+    else { return false }
+    let window = value as! AXUIElement
+    guard let windowFrame = frame(of: window), windowFrame.width > 0 else { return false }
+    // Esto corre cada segundo: se reusa el área web encontrada y solo se busca otra si esa ya no existe (otra pestaña).
+    if let cached = cachedWebArea, cached.pid == pid, let web = frame(of: cached.element), web.width > 0 {
+      lastWebArea = (web, windowFrame)
+      return web.width >= windowFrame.width - 2 && web.height >= windowFrame.height - 2
     }
-    if let last = lastVideo, !title.isEmpty, title == last.title, Date().timeIntervalSince(last.at) < 300 { return true }
+    cachedWebArea = nil
+    // Búsqueda a lo ancho con tope: el árbol de una página puede ser enorme y el área web está cerca de la raíz.
+    var queue = [window]
+    var visited = 0
+    while !queue.isEmpty, visited < 300 {
+      let element = queue.removeFirst()
+      visited += 1
+      var role: CFTypeRef?
+      AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
+      if (role as? String) == "AXWebArea" {
+        guard let web = frame(of: element) else { return false }
+        cachedWebArea = (pid, element)
+        lastWebArea = (web, windowFrame)
+        return web.width >= windowFrame.width - 2 && web.height >= windowFrame.height - 2
+      }
+      var children: CFTypeRef?
+      if AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children) == .success,
+        let list = children as? [AXUIElement] { queue.append(contentsOf: list) }
+    }
     return false
   }
 
-  private static var lastVideo: (title: String, at: Date)?
+  private static func frame(of element: AXUIElement) -> CGRect? {
+    var pos: CFTypeRef?
+    var size: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &pos) == .success,
+      AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &size) == .success
+    else { return nil }
+    var p = CGPoint.zero
+    var s = CGSize.zero
+    AXValueGetValue(pos as! AXValue, .cgPoint, &p)
+    AXValueGetValue(size as! AXValue, .cgSize, &s)
+    return CGRect(origin: p, size: s)
+  }
+
+  private static var lastWebArea: (web: CGRect, window: CGRect)?
+  private static var cachedWebArea: (pid: pid_t, element: AXUIElement)?
+  private static var lastLogged: Bool?
+
+  /// Deja en un archivo cada cambio de decisión con las medidas, para revisar casos raros sin adivinar.
+  private static func logBrowser(_ hides: Bool) {
+    guard hides != lastLogged else { return }
+    lastLogged = hides
+    let url = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Application Support/Faro/isla-navegador.log")
+    let m = lastWebArea.map { "web \(Int($0.web.width))x\(Int($0.web.height)) ventana \(Int($0.window.width))x\(Int($0.window.height))" } ?? "sin área web"
+    let line = "\(Date()) \(hides ? "oculta" : "visible") \(m)\n"
+    if let h = try? FileHandle(forWritingTo: url) {
+      h.seekToEndOfFile()
+      h.write(Data(line.utf8))
+      try? h.close()
+    } else {
+      try? line.write(to: url, atomically: true, encoding: .utf8)
+    }
+  }
 
   /// La app tiene pedido al sistema que no se apague la pantalla (no necesita ningún permiso).
   static func keepsDisplayAwake(pid: pid_t) -> Bool {
