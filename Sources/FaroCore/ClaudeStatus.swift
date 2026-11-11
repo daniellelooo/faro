@@ -77,6 +77,10 @@ public struct ClaudeActivityBoard: Sendable {
     public var workingSince: Date?
     public var lastEvent: Date
     public var cwd: String? = nil
+    /// Nombre del chat (el que se ve en la app de Claude); los avisos lo usan en vez del de la carpeta.
+    public var title: String? = nil
+
+    public var displayName: String { title ?? project }
   }
 
   public var sessions: [String: Session] = [:]
@@ -89,11 +93,22 @@ public struct ClaudeActivityBoard: Sendable {
     sessions.values.filter { $0.state == .working }.min { ($0.workingSince ?? .distantFuture) < ($1.workingSince ?? .distantFuture) }
   }
 
+  /// Los hooks no traen el nombre del chat: quien lee los eventos lo busca en el registro de la sesión y lo deja aquí.
+  public mutating func setTitle(_ title: String?, for sessionID: String) {
+    guard let title, !title.isEmpty else { return }
+    sessions[sessionID]?.title = title
+    pendingTitles[sessionID] = sessions[sessionID] == nil ? title : nil
+  }
+
+  /// Nombre para una sesión que todavía no está en el tablero (llega con su primer evento).
+  var pendingTitles: [String: String] = [:]
+
   @discardableResult
   public mutating func apply(_ e: HookEvent) -> ActivityNotice? {
     let project = e.cwd.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Claude"
     var s = sessions[e.sessionID] ?? Session(project: project, state: .idle, workingSince: nil, lastEvent: e.date)
     s.project = project
+    if let t = pendingTitles.removeValue(forKey: e.sessionID) { s.title = t }
     s.lastEvent = e.date
     if let c = e.cwd { s.cwd = c }
     defer { if e.name != "SessionEnd" { sessions[e.sessionID] = s } }
@@ -106,18 +121,18 @@ public struct ClaudeActivityBoard: Sendable {
       return nil
     case "PermissionRequest":
       s.state = .waiting
-      return .needsYou(project: project)
+      return .needsYou(project: s.displayName)
     case "Notification":
       let waitingTypes: Set<String> = ["permission_prompt", "elicitation_dialog", "agent_needs_input"]
       guard let type = e.notificationType, waitingTypes.contains(type), s.state != .waiting else { return nil }
       s.state = .waiting
-      return .needsYou(project: project)
+      return .needsYou(project: s.displayName)
     case "Stop", "StopFailure":
       let wasBusy = s.state != .idle
       let seconds = s.workingSince.map { Int(e.date.timeIntervalSince($0).rounded()) } ?? 0
       s.state = .idle
       s.workingSince = nil
-      return wasBusy ? .finished(project: project, seconds: seconds) : nil
+      return wasBusy ? .finished(project: s.displayName, seconds: seconds) : nil
     case "SessionEnd":
       sessions[e.sessionID] = nil
       return nil
@@ -146,6 +161,8 @@ public enum TranscriptProbe {
     public var lastMessageAt: Date
     /// El último mensaje es Claude cerrando su turno.
     public var finished: Bool
+    /// Nombre del chat, si aparece en el tramo leído.
+    public var title: String? = nil
   }
 
   public static func status(of url: URL, tailBytes: Int = 96 * 1024) -> Status? {
@@ -154,7 +171,38 @@ public enum TranscriptProbe {
     let size = (try? h.seekToEnd()) ?? 0
     try? h.seek(toOffset: size > UInt64(tailBytes) ? size - UInt64(tailBytes) : 0)
     let text = String(decoding: h.readDataToEndOfFile(), as: UTF8.self)
-    return status(tail: text, sessionID: url.deletingPathExtension().lastPathComponent)
+    var s = status(tail: text, sessionID: url.deletingPathExtension().lastPathComponent)
+    s?.title = title(tail: text)
+    return s
+  }
+
+  /// Nombre del chat: Claude Code escribe una línea `custom-title` con él (y la repite a menudo, así que está en el
+  /// final del registro); si se renombra, cuenta la última.
+  public static func title(tail: String) -> String? {
+    for line in tail.split(separator: "\n").reversed() where line.contains("\"custom-title\"") {
+      guard let data = line.data(using: .utf8), let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        o["type"] as? String == "custom-title",
+        let t = (o["customTitle"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty
+      else { continue }
+      return t
+    }
+    return nil
+  }
+
+  public static func title(of url: URL, tailBytes: Int = 96 * 1024) -> String? {
+    guard let h = try? FileHandle(forReadingFrom: url) else { return nil }
+    defer { try? h.close() }
+    let size = (try? h.seekToEnd()) ?? 0
+    try? h.seek(toOffset: size > UInt64(tailBytes) ? size - UInt64(tailBytes) : 0)
+    return title(tail: String(decoding: h.readDataToEndOfFile(), as: UTF8.self))
+  }
+
+  /// Registro de una sesión por su id: `<raíz>/<carpeta del proyecto>/<sesión>.jsonl`.
+  public static func file(sessionID: String, root: URL) -> URL? {
+    guard !sessionID.isEmpty, !sessionID.contains("/") else { return nil }
+    let dirs = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
+    return dirs.lazy.map { $0.appendingPathComponent(sessionID + ".jsonl") }
+      .first { FileManager.default.fileExists(atPath: $0.path) }
   }
 
   public static func status(tail: String, sessionID: String) -> Status? {
@@ -184,9 +232,11 @@ extension ClaudeActivityBoard {
     let project = t.cwd.map { URL(fileURLWithPath: $0).lastPathComponent } ?? sessions[t.sessionID]?.project ?? "Claude"
     let recent = now.timeIntervalSince(t.lastMessageAt) < activeWindow
     var s = sessions[t.sessionID]
+    if let title = t.title { s?.title = title }
     if !t.finished && recent {
       if s == nil {
-        s = Session(project: project, state: .working, workingSince: t.lastMessageAt, lastEvent: t.lastMessageAt, cwd: t.cwd)
+        s = Session(project: project, state: .working, workingSince: t.lastMessageAt, lastEvent: t.lastMessageAt, cwd: t.cwd,
+          title: t.title)
       } else if s!.state == .idle && t.lastMessageAt > s!.lastEvent {
         s!.state = .working
         s!.workingSince = t.lastMessageAt
@@ -202,7 +252,8 @@ extension ClaudeActivityBoard {
       cur.workingSince = nil
       cur.lastEvent = t.lastMessageAt
       sessions[t.sessionID] = cur
-      return .finished(project: cur.project, seconds: seconds)
+      if let title = t.title { cur.title = title }
+      return .finished(project: cur.displayName, seconds: seconds)
     }
     return nil
   }

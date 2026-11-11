@@ -130,6 +130,8 @@ final class ClaudeMonitor {
     chooseLimits()
   }
 
+  nonisolated static let transcriptsRoot = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects")
+
   private func readEvents() {
     let url = ClaudeIntegration.eventsFile
     guard let size = try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? UInt64 else { return }
@@ -142,6 +144,11 @@ final class ClaudeMonitor {
     eventsOffset += UInt64(data.distance(from: data.startIndex, to: last) + 1)
     for line in data[data.startIndex...last].split(separator: 0x0A) {
       guard let e = HookEvent.decode(Data(line)) else { continue }
+      // Solo los eventos que avisan necesitan el nombre del chat; buscarlo es leer el final de su registro.
+      if ["Stop", "StopFailure", "PermissionRequest", "Notification"].contains(e.name),
+        let f = TranscriptProbe.file(sessionID: e.sessionID, root: Self.transcriptsRoot) {
+        board.setTitle(TranscriptProbe.title(of: f), for: e.sessionID)
+      }
       if let notice = board.apply(e) { onNotice?(notice) }
     }
   }
@@ -161,7 +168,7 @@ final class ClaudeMonitor {
     scanningTranscripts = true
     lastTranscriptScan = Date()
     Task.detached(priority: .utility) {
-      let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects")
+      let root = ClaudeMonitor.transcriptsRoot
       let cutoff = Date().addingTimeInterval(-600)
       var found: [TranscriptProbe.Status] = []
       let dirs = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
