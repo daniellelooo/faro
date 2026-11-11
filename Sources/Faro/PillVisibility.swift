@@ -60,17 +60,19 @@ enum PillVisibility {
     guard isFullscreen(pid: pid) || (browser && focusedWindowIsFullscreen(pid: pid)) else { return false }
     if inFullscreen { return true }
     guard browser else { return false }
+    // Un navegador en pantalla completa es para navegar (Dia o Arc se usan así todo el día): la isla solo se oculta
+    // con un video reproduciéndose, que mantiene la pantalla encendida. El título por sí solo no basta: ocultaba la
+    // isla en cualquier página de YouTube. Se recuerda el título unos minutos para que no vuelva a salir al pausar.
     let title = focusedWindowTitle(pid: pid) ?? ""
-    if VideoSites.isWatching(title: title) { return true }
-    // Arc puede dejar el título sin el sitio ("(2) Nombre del video"). Un video en reproducción mantiene la pantalla
-    // encendida; se recuerda el título para que la isla no vuelva a salir al pausarlo.
-    if !title.isEmpty, title == lastVideoTitle { return true }
-    guard keepsDisplayAwake(pid: pid) else { return false }
-    lastVideoTitle = title
-    return true
+    if keepsDisplayAwake(pid: pid) {
+      lastVideo = (title, Date())
+      return true
+    }
+    if let last = lastVideo, !title.isEmpty, title == last.title, Date().timeIntervalSince(last.at) < 300 { return true }
+    return false
   }
 
-  private static var lastVideoTitle: String?
+  private static var lastVideo: (title: String, at: Date)?
 
   /// La app tiene pedido al sistema que no se apague la pantalla (no necesita ningún permiso).
   static func keepsDisplayAwake(pid: pid_t) -> Bool {
