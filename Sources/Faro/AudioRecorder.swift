@@ -9,10 +9,14 @@ final class AudioRecorder: @unchecked Sendable {
   /// motor reusado después de ese cambio puede quedar corriendo sin entregar audio.
   private var engine = AVAudioEngine()
   private var configObserver: NSObjectProtocol?
+  /// Grabación directa del micrófono del Mac cuando la entrada del sistema son audífonos Bluetooth.
+  private var deviceInput: DeviceInput?
   /// Mayor nivel recibido en la grabación: si queda en cero el micrófono no mandó nada (ni ruido de fondo).
   private(set) var peak: Float = 0
   /// Trozos de audio recibidos en la grabación.
   private(set) var chunks = 0
+  /// Formato del micrófono en cada conexión de la grabación ("24000 Hz 1 canal"); más de uno si cambió a mitad.
+  private(set) var formats: [String] = []
   private let lock = NSLock()
   private var buffer: [Float] = []
   private var converter: AVAudioConverter?
@@ -31,7 +35,16 @@ final class AudioRecorder: @unchecked Sendable {
     lock.unlock()
     peak = 0
     chunks = 0
+    formats = []
     stopObserving()
+    converter = nil
+    if let mic = MicInfo.preferredInput() {
+      let input = try DeviceInput(device: mic) { [weak self] pcm in self?.append(pcm) }
+      deviceInput = input
+      formats.append("\(MicInfo.name(of: mic) ?? "?") \(Int(input.format.sampleRate)) Hz")
+      isRecording = true
+      return
+    }
     engine = AVAudioEngine()
     try connect()
     isRecording = true
@@ -40,8 +53,8 @@ final class AudioRecorder: @unchecked Sendable {
     configObserver = NotificationCenter.default.addObserver(
       forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
     ) { [weak self] _ in
-      guard let self, self.isRecording else { return }
-      self.engine.stop()
+      // Solo si el sistema detuvo el motor; algunos avisos llegan con el motor andando y no hace falta reconectar.
+      guard let self, self.isRecording, !self.engine.isRunning else { return }
       try? self.connect()
     }
   }
@@ -50,7 +63,8 @@ final class AudioRecorder: @unchecked Sendable {
     let input = engine.inputNode
     let format = input.outputFormat(forBus: 0)
     guard format.sampleRate > 0, format.channelCount > 0 else { throw RecorderError.noInput }
-    converter = AVAudioConverter(from: format, to: target)
+    converter = nil
+    formats.append("\(MicInfo.name(of: MicInfo.currentDevice(of: input)) ?? "?") \(Int(format.sampleRate)) Hz")
     input.removeTap(onBus: 0)
     input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] pcm, _ in
       self?.append(pcm)
@@ -69,8 +83,13 @@ final class AudioRecorder: @unchecked Sendable {
   /// Detiene la grabación y devuelve todo lo grabado.
   func stop() -> [Float] {
     stopObserving()
-    engine.inputNode.removeTap(onBus: 0)
-    engine.stop()
+    if let deviceInput {
+      deviceInput.stop()
+      self.deviceInput = nil
+    } else {
+      engine.inputNode.removeTap(onBus: 0)
+      engine.stop()
+    }
     isRecording = false
     level = 0
     lock.lock()
@@ -79,6 +98,7 @@ final class AudioRecorder: @unchecked Sendable {
   }
 
   private func append(_ pcm: AVAudioPCMBuffer) {
+    if converter?.inputFormat != pcm.format { converter = AVAudioConverter(from: pcm.format, to: target) }
     guard let converter else { return }
     let ratio = target.sampleRate / pcm.format.sampleRate
     let capacity = AVAudioFrameCount(Double(pcm.frameLength) * ratio + 32)
@@ -111,18 +131,78 @@ final class AudioRecorder: @unchecked Sendable {
   }
 }
 
-/// Nombre del micrófono que usa el sistema, para decir cuál falló.
+/// Qué micrófono usar. Con audífonos Bluetooth (AirPods) como entrada del sistema se prefiere el del Mac: al usar su
+/// micrófono los audífonos pasan a modo llamada, el audio llega con mucha menos calidad (Whisper inventa palabras) y la
+/// música baja de calidad mientras se dicta.
 enum MicInfo {
-  static var defaultInputName: String? {
+  static let preferBuiltInKey = "microfonoDelMacConBluetooth"
+
+  static var preferBuiltIn: Bool { UserDefaults.standard.object(forKey: preferBuiltInKey) as? Bool ?? true }
+
+  /// El micrófono del Mac si la entrada del sistema es Bluetooth y la opción está activa; nil para usar la del sistema.
+  static func preferredInput() -> AudioDeviceID? {
+    guard preferBuiltIn, let current = defaultInput, isBluetooth(current) else { return nil }
+    return inputDevices().first { transport(of: $0) == kAudioDeviceTransportTypeBuiltIn && isAlive($0) }
+  }
+
+  static var defaultInput: AudioDeviceID? {
+    var id = AudioDeviceID(0)
+    return get(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultInputDevice, &id) ? id : nil
+  }
+
+  static var defaultInputName: String? { defaultInput.flatMap(name(of:)) }
+
+  static func currentDevice(of input: AVAudioInputNode) -> AudioDeviceID? {
+    guard let unit = input.audioUnit else { return nil }
     var id = AudioDeviceID(0)
     var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-    var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice,
-      mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
-    guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &id) == noErr else { return nil }
+    guard AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &id, &size) == noErr
+    else { return nil }
+    return id
+  }
+
+  static func name(of id: AudioDeviceID?) -> String? {
+    guard let id else { return nil }
     var name: Unmanaged<CFString>?
-    size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-    addr.mSelector = kAudioObjectPropertyName
-    guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &name) == noErr, let name else { return nil }
+    guard get(id, kAudioObjectPropertyName, &name), let name else { return nil }
     return name.takeRetainedValue() as String
+  }
+
+  private static func isBluetooth(_ id: AudioDeviceID) -> Bool {
+    let t = transport(of: id)
+    return t == kAudioDeviceTransportTypeBluetooth || t == kAudioDeviceTransportTypeBluetoothLE
+  }
+
+  private static func transport(of id: AudioDeviceID) -> UInt32 {
+    var t = UInt32(0)
+    return get(id, kAudioDevicePropertyTransportType, &t) ? t : 0
+  }
+
+  private static func isAlive(_ id: AudioDeviceID) -> Bool {
+    var alive = UInt32(0)
+    return get(id, kAudioDevicePropertyDeviceIsAlive, &alive) && alive != 0
+  }
+
+  private static func inputDevices() -> [AudioDeviceID] {
+    let system = AudioObjectID(kAudioObjectSystemObject)
+    var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices, mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain)
+    var size = UInt32(0)
+    guard AudioObjectGetPropertyDataSize(system, &addr, 0, nil, &size) == noErr else { return [] }
+    var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+    guard AudioObjectGetPropertyData(system, &addr, 0, nil, &size, &ids) == noErr else { return [] }
+    return ids.filter { id in
+      var a = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreams, mScope: kAudioDevicePropertyScopeInput,
+        mElement: kAudioObjectPropertyElementMain)
+      var s = UInt32(0)
+      return AudioObjectGetPropertyDataSize(id, &a, 0, nil, &s) == noErr && s > 0
+    }
+  }
+
+  private static func get<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector, _ value: inout T) -> Bool {
+    var addr = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain)
+    var size = UInt32(MemoryLayout<T>.size)
+    return AudioObjectGetPropertyData(object, &addr, 0, nil, &size, &value) == noErr
   }
 }

@@ -21,6 +21,8 @@ final class AppSettings {
   var invertTrackpadScroll: Bool { didSet { defaults.set(invertTrackpadScroll, forKey: "invertirScrollTrackpad") } }
   var steppedScrollInGames: Bool { didSet { defaults.set(steppedScrollInGames, forKey: "scrollPorPasosEnJuegos") } }
   var hideInFullscreen: Bool { didSet { defaults.set(hideInFullscreen, forKey: "ocultarEnPantallaCompleta") } }
+  /// Con AirPods u otros audífonos Bluetooth como entrada, dictar y grabar reuniones con el micrófono del Mac.
+  var builtInMicWithBluetooth: Bool { didSet { defaults.set(builtInMicWithBluetooth, forKey: MicInfo.preferBuiltInKey) } }
   var words: [String] { didSet { defaults.set(words, forKey: "diccionarioPalabras") } }
   var styles: StylePreferences {
     didSet { defaults.set(try? JSONEncoder().encode(styles), forKey: "estilos") }
@@ -44,6 +46,7 @@ final class AppSettings {
     invertTrackpadScroll = defaults.bool(forKey: "invertirScrollTrackpad")
     steppedScrollInGames = defaults.object(forKey: "scrollPorPasosEnJuegos") as? Bool ?? true
     hideInFullscreen = defaults.object(forKey: "ocultarEnPantallaCompleta") as? Bool ?? false
+    builtInMicWithBluetooth = MicInfo.preferBuiltIn
     copilotNotesFolder = defaults.string(forKey: "carpetaNotasCopiloto") ?? MeetingCopilot.defaultFolder.path
     if let saved = defaults.stringArray(forKey: "diccionarioPalabras") {
       words = saved

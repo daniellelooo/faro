@@ -286,6 +286,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     recorder.onSamples = nil
     let samples = recorder.stop()
     guard let stream else { return }
+    // El último dictado queda en disco (se sobrescribe) para revisar qué oyó Faro cuando un dictado sale raro.
+    let lastAudio = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Application Support/Faro/ultimo-dictado.wav")
+    let wav = WAVEncoder.encode(samples: samples, sampleRate: AudioRecorder.sampleRate)
+    let note = "\(Date()) sistema: \(MicInfo.defaultInputName ?? "?") · usado: \(recorder.formats.joined(separator: " → ")) · " +
+      String(format: "%.1f s, pico %.3f\n", Double(samples.count) / Double(AudioRecorder.sampleRate), recorder.peak)
+    DispatchQueue.global(qos: .utility).async {
+      try? wav.write(to: lastAudio)
+      let log = lastAudio.deletingLastPathComponent().appendingPathComponent("dictado.log")
+      if let h = try? FileHandle(forWritingTo: log) {
+        h.seekToEndOfFile()
+        h.write(Data(note.utf8))
+        try? h.close()
+      } else {
+        try? note.write(to: log, atomically: true, encoding: .utf8)
+      }
+    }
     // Sin audio, o con ceros exactos, el micrófono no está mandando nada: se avisa en vez de ocultar en silencio.
     if recorder.chunks == 0 || recorder.peak == 0 {
       self.stream = nil

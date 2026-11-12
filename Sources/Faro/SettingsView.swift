@@ -138,6 +138,9 @@ struct SettingsView: View {
           LabeledContent("Transcripción", value: "Whisper large-v3-turbo, local")
           LabeledContent("Limpieza", value: AnthropicCleaner.model)
           LabeledContent("Atajo", value: "Mantener fn · doble toque para manos libres")
+          Toggle("Usar el micrófono del Mac con audífonos Bluetooth", isOn: $settings.builtInMicWithBluetooth)
+          Text("Con unos AirPods conectados, su micrófono se oye mucho peor y la música baja de calidad mientras dictas. Con esto activo, Faro escucha por el micrófono del Mac.")
+            .font(.caption).foregroundStyle(.secondary)
         }
       }
       .padding(28)
