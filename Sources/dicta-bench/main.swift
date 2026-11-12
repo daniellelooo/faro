@@ -66,7 +66,30 @@ func samples(for c: Case, voice: String) throws -> [Float] {
   let data = try Data(contentsOf: f32)
   // Medio segundo de silencio a cada lado, como al soltar la tecla.
   let pad = [Float](repeating: 0, count: 8000)
-  return pad + data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) } + pad
+  let audio = pad + data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) } + pad
+  return farNoise.map { farAway(audio, noise: $0) } ?? audio
+}
+
+/// Modo lejos (BENCH_LEJOS=ruido.f32): la voz 20 dB más baja, como hablando a un par de metros del Mac, con el ruido
+/// de una pieza real (grabado a 16 kHz) sonando debajo todo el tiempo.
+let farNoise: [Float]? = ProcessInfo.processInfo.environment["BENCH_LEJOS"].flatMap { path in
+  (try? Data(contentsOf: URL(fileURLWithPath: path))).map { d in d.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) } }
+}
+
+func farAway(_ voice: [Float], noise: [Float]) -> [Float] {
+  let gain: Float = 0.1
+  return voice.enumerated().map { i, v in v * gain + noise[i % noise.count] }
+}
+
+/// Como en la app: el audio llega por trozos a StreamingDictation y al soltar se transcribe lo que falta.
+func streamTranscribe(_ samples: [Float], transcriber: any Transcriber, dictionary: PersonalDictionary) async throws -> String {
+  let stream = StreamingDictation(transcriber: transcriber, sampleRate: 16000, dictionary: dictionary)
+  var i = 0
+  while i < samples.count {
+    stream.append(Array(samples[i..<min(samples.count, i + 341)]))
+    i += 341
+  }
+  return try await stream.finish()
 }
 
 func percentile(_ v: [Double], _ p: Double) -> Double {
@@ -79,6 +102,24 @@ func containsWord(_ text: String, _ word: String) -> Bool {
   let t = " " + TextNormalizer.normalize(text).joined(separator: " ") + " "
   let w = TextNormalizer.normalize(word).joined(separator: " ")
   return t.contains(" \(w) ")
+}
+
+// `dicta-bench --audio archivo.f32`: transcribe una grabación real (16 kHz mono) por el camino de la app y la imprime.
+if CommandLine.arguments.count > 2, CommandLine.arguments[1] == "--audio" {
+  let server = WhisperServer()
+  try await server.start()
+  let data = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[2]))
+  let audio = data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+  print(try await streamTranscribe(audio, transcriber: WhisperServerTranscriber(server: server), dictionary: .default))
+  await server.stop()
+  exit(0)
+}
+
+// `dicta-bench --limpiar "texto"`: pasa una transcripción por la limpieza (tono literal) 5 veces y la imprime.
+if CommandLine.arguments.count > 2, CommandLine.arguments[1] == "--limpiar" {
+  let cleaner = AnthropicCleaner(apiKey: ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"])
+  for _ in 0..<5 { print(await cleaner.clean(CommandLine.arguments[2], tone: .literal, dictionary: .default, context: nil).text, "\n") }
+  exit(0)
 }
 
 let only = CommandLine.arguments.dropFirst().first
@@ -109,7 +150,17 @@ for (i, c) in cases.enumerated() {
   try await Task.sleep(for: .seconds(1.2))
   let voice = voices[i % voices.count]
   let tone = c.tone.flatMap(Tone.init(rawValue:)) ?? .neutral
-  let r = try await pipeline.run(samples: try samples(for: c, voice: voice), sampleRate: 16000, tone: tone, localOnly: false)
+  let audio = try samples(for: c, voice: voice)
+  let r: DictationResult
+  if farNoise != nil || ProcessInfo.processInfo.environment["BENCH_STREAM"] != nil {
+    let t0 = ContinuousClock.now
+    let raw = try await streamTranscribe(audio, transcriber: pipeline.transcriber, dictionary: pipeline.dictionary)
+    var timings = DictationTimings()
+    timings.transcription = DictationPipeline.seconds(ContinuousClock.now - t0)
+    r = await pipeline.cleanup(raw: raw, tone: tone, context: nil, localOnly: false, timings: timings, start: t0)
+  } else {
+    r = try await pipeline.run(samples: audio, sampleRate: 16000, tone: tone, localOnly: false)
+  }
   let werRaw = WER.compute(reference: c.ideal, hypothesis: r.raw)
   let werClean = WER.compute(reference: c.ideal, hypothesis: r.final)
   var pass = true
