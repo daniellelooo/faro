@@ -286,27 +286,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     recorder.onSamples = nil
     let samples = recorder.stop()
     guard let stream else { return }
-    // El último dictado queda en disco (se sobrescribe) para revisar qué oyó Faro cuando un dictado sale raro.
-    let lastAudio = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent("Library/Application Support/Faro/ultimo-dictado.wav")
+    // Los últimos dictados quedan en disco (audio y texto) para revisar con la voz real por qué uno salió raro.
     let wav = WAVEncoder.encode(samples: samples, sampleRate: AudioRecorder.sampleRate)
-    let note = "\(Date()) sistema: \(MicInfo.defaultInputName ?? "?") · usado: \(recorder.formats.joined(separator: " → ")) · " +
-      String(format: "%.1f s, pico %.3f\n", Double(samples.count) / Double(AudioRecorder.sampleRate), recorder.peak)
-    DispatchQueue.global(qos: .utility).async {
-      try? wav.write(to: lastAudio)
-      let log = lastAudio.deletingLastPathComponent().appendingPathComponent("dictado.log")
-      if let h = try? FileHandle(forWritingTo: log) {
-        h.seekToEndOfFile()
-        h.write(Data(note.utf8))
-        try? h.close()
-      } else {
-        try? note.write(to: log, atomically: true, encoding: .utf8)
-      }
-    }
+    let archived = DictationArchive.saveAudio(wav, info: "Micrófono del sistema: \(MicInfo.defaultInputName ?? "?") · usado: " +
+      recorder.formats.joined(separator: " → ") +
+      String(format: " · %.1f s, pico %.3f", Double(samples.count) / Double(AudioRecorder.sampleRate), recorder.peak))
     // Sin audio, o con ceros exactos, el micrófono no está mandando nada: se avisa en vez de ocultar en silencio.
     if recorder.chunks == 0 || recorder.peak == 0 {
       self.stream = nil
       overlay.show(.notice("El micrófono no mandó audio (\(MicInfo.defaultInputName ?? "entrada desconocida"))"))
+      DictationArchive.note("Descartado: el micrófono no mandó audio", to: archived)
       return
     }
     self.stream = nil
@@ -322,6 +311,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       let start = clock.now
       do {
         if Double(DictationPipeline.trimSilence(samples, sampleRate: AudioRecorder.sampleRate).count) / Double(AudioRecorder.sampleRate) < DictationPipeline.minimumSpeech {
+          DictationArchive.note("Descartado: no se detectó voz", to: archived)
           overlay.show(.hidden)
           return
         }
@@ -329,6 +319,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var timings = DictationTimings()
         timings.transcription = DictationPipeline.seconds(clock.now - start)
         let result = await pipeline.cleanup(raw: raw, tone: tone, context: focus.context, localOnly: localOnly, timings: timings, start: start)
+        DictationArchive.note("Whisper: \(raw)\nFinal: \(result.final)\(result.usedFallback ? " (sin limpiar)" : "")", to: archived)
         guard !result.skipped else {
           overlay.show(.hidden)
           return
