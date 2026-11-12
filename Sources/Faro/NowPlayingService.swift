@@ -171,8 +171,37 @@ final class NowPlayingService {
       rate: (o["rate"] as? NSNumber)?.doubleValue ?? (playing ? 1 : 0),
       timestamp: (o["timestamp"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) },
       playing: playing, appBundleID: NSRunningApplication(processIdentifier: pid)?.bundleIdentifier)
-    current = np
     let key = title + "|" + np.artist
+    // En un navegador, pasar el puntero por un video (YouTube) lo reproduce como vista previa y el sistema lo reporta
+    // como si sonara. Lo que suena en un navegador solo se muestra tras unos segundos seguidos sonando.
+    if let id = np.appBundleID, PillVisibility.browsers.contains(id), key != confirmedBrowserKey {
+      latestBrowser = np
+      guard playing else { return }
+      if pendingBrowserKey != key {
+        pendingBrowserKey = key
+        pendingBrowser?.cancel()
+        pendingBrowser = Task { [weak self] in
+          try? await Task.sleep(for: .seconds(Self.browserConfirmDelay))
+          guard let self, !Task.isCancelled, self.pendingBrowserKey == key, let latest = self.latestBrowser,
+            latest.playing, latest.title + "|" + latest.artist == key else { return }
+          self.confirmedBrowserKey = key
+          self.show(latest, key: key)
+        }
+      }
+      return
+    }
+    show(np, key: key)
+  }
+
+  static let browserConfirmDelay = 4.0
+  private var confirmedBrowserKey = ""
+  private var pendingBrowserKey = ""
+  private var pendingBrowser: Task<Void, Never>?
+  private var latestBrowser: NowPlaying?
+
+  private func show(_ np: NowPlaying, key: String) {
+    let playing = np.playing
+    current = np
     if key != lastTrackKey {
       lastTrackKey = key
       if playing { onTrackChange?(np) }
