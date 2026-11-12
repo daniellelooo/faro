@@ -286,6 +286,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     recorder.onSamples = nil
     let samples = recorder.stop()
     guard let stream else { return }
+    // Sin audio, o con ceros exactos, el micrófono no está mandando nada: se avisa en vez de ocultar en silencio.
+    if recorder.chunks == 0 || recorder.peak == 0 {
+      self.stream = nil
+      overlay.show(.notice("El micrófono no mandó audio (\(MicInfo.defaultInputName ?? "entrada desconocida"))"))
+      return
+    }
     self.stream = nil
     overlay.show(.processing)
     let focus = self.focus ?? AXReader.capture(app: NSWorkspace.shared.frontmostApplication)
