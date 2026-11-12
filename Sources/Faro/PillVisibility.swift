@@ -74,6 +74,12 @@ enum PillVisibility {
   /// La página web ocupa toda la ventana activa del navegador (contenido en pantalla completa).
   static func webAreaFillsWindow(pid: pid_t) -> Bool {
     let app = AXUIElementCreateApplication(pid)
+    // Dia, Chrome y los demás basados en Chromium no muestran la página a Accesibilidad hasta que una app lo pide.
+    // Se pide solo cuando hay un video sonando (es cuando importa), una vez por proceso.
+    if !manualAccessibility.contains(pid), keepsDisplayAwake(pid: pid) {
+      manualAccessibility.insert(pid)
+      AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+    }
     var value: CFTypeRef?
     guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &value) == .success, let value
     else { return false }
@@ -120,6 +126,7 @@ enum PillVisibility {
   }
 
   private static var lastWebArea: (web: CGRect, window: CGRect)?
+  private static var manualAccessibility: Set<pid_t> = []
   private static var cachedWebArea: (pid: pid_t, element: AXUIElement)?
   private static var lastLogged: Bool?
 
@@ -130,7 +137,8 @@ enum PillVisibility {
     let url = FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent("Library/Application Support/Faro/isla-navegador.log")
     let m = lastWebArea.map { "web \(Int($0.web.width))x\(Int($0.web.height)) ventana \(Int($0.window.width))x\(Int($0.window.height))" } ?? "sin área web"
-    let line = "\(Date()) \(hides ? "oculta" : "visible") \(m)\n"
+    let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?"
+    let line = "\(Date()) \(front) \(hides ? "oculta" : "visible") \(m)\n"
     if let h = try? FileHandle(forWritingTo: url) {
       h.seekToEndOfFile()
       h.write(Data(line.utf8))
