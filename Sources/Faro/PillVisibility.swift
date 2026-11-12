@@ -48,7 +48,10 @@ enum PillVisibility {
   private static func videoCovers(_ screen: NSScreen) -> Bool {
     NSWorkspace.shared.runningApplications.contains { app in
       guard let id = app.bundleIdentifier, browsers.contains(id) else { return false }
-      return window(of: app.processIdentifier, covers: screen) && keepsDisplayAwake(pid: app.processIdentifier)
+      // Un video sonando en una ventana que ocupa la pantalla no basta (Arc o Dia se usan así todo el día, y YouTube
+      // reproduce las vistas previas al pasar el puntero): la página tiene que ocupar toda la ventana.
+      let pid = app.processIdentifier
+      return window(of: pid, covers: screen) && keepsDisplayAwake(pid: pid) && webAreaFillsWindow(pid: pid)
     }
   }
 
