@@ -57,7 +57,15 @@ public final class DictationPipeline: Sendable {
     var reason: String?
     if !localOnly && CleanupHeuristics.needsCleanup(raw) {
       let t = clock.now
-      let result = await cleaner.clean(raw, tone: tone, dictionary: dictionary, context: context)
+      var result = await cleaner.clean(raw, tone: tone, dictionary: dictionary, context: context)
+      // La limpieza a veces borra una parte que no entiende y con ella un "no", lo que invierte el sentido: se repite
+      // una vez y, si lo vuelve a hacer, se pega lo que transcribió Whisper.
+      if !result.usedFallback && NegationGuard.lostNegation(raw: raw, cleaned: result.text) {
+        result = await cleaner.clean(raw, tone: tone, dictionary: dictionary, context: context)
+        if !result.usedFallback && NegationGuard.lostNegation(raw: raw, cleaned: result.text) {
+          result = CleanResult(text: raw, usedFallback: false)
+        }
+      }
       timings.cleanup = Self.seconds(clock.now - t)
       final = result.text
       usedFallback = result.usedFallback
@@ -101,5 +109,30 @@ public final class DictationPipeline: Sendable {
     let from = max(0, first * win - pad)
     let to = min(samples.count, (last + 1) * win + pad)
     return Array(samples[from..<to])
+  }
+}
+
+/// Revisa que la limpieza no haya quitado negaciones que Whisper sí escribió.
+public enum NegationGuard {
+  static let words: Set<String> = ["no", "nunca", "jamás", "tampoco"]
+
+  public static func lostNegation(raw: String, cleaned: String) -> Bool {
+    count(raw, skipCorrections: true) > count(cleaned, skipCorrections: false)
+  }
+
+  /// Negaciones del texto, sin contar las repetidas seguidas ("no, no, no sé" vale una). En la transcripción tampoco
+  /// cuentan las que van seguidas de coma: son autocorrecciones ("el martes, no, el miércoles") que sí se quitan.
+  static func count(_ text: String, skipCorrections: Bool) -> Int {
+    let tokens = text.lowercased().split(whereSeparator: { $0.isWhitespace })
+    var n = 0
+    var previous = ""
+    for t in tokens {
+      let word = t.trimmingCharacters(in: .punctuationCharacters)
+      defer { previous = word }
+      guard words.contains(word), word != previous else { continue }
+      if skipCorrections && t.hasSuffix(",") { continue }
+      n += 1
+    }
+    return n
   }
 }
