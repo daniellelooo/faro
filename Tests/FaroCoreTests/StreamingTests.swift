@@ -19,9 +19,24 @@ final class RecordingTranscriber: Transcriber, @unchecked Sendable {
   func voice(_ s: Double) -> [Float] { (0..<Int(s * 16000)).map { Float(sin(Double($0) * 0.05)) * 0.3 } }
   func silence(_ s: Double) -> [Float] { [Float](repeating: 0, count: Int(s * 16000)) }
 
-  @Test func transcribeLaPrimeraParteAntesDeSoltarYUneElTexto() async throws {
+  @Test func unDictadoCortoSeTranscribeEnteroAlSoltar() async throws {
     let t = RecordingTranscriber()
     let d = StreamingDictation(transcriber: t, sampleRate: 16000, dictionary: .default)
+    let audio = voice(3.5) + silence(0.6) + voice(1.2) + silence(0.3)
+    for chunk in stride(from: 0, to: audio.count, by: 640) {
+      d.append(Array(audio[chunk..<min(audio.count, chunk + 640)]))
+    }
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(t.calls.isEmpty)
+    #expect(try await d.finish() == "parte1")
+    #expect(t.calls.count == 1)
+    #expect(t.calls[0].samples > 16000 * 5)
+  }
+
+  @Test func enUnDictadoLargoAdelantaPedazosYUneElTexto() async throws {
+    let t = RecordingTranscriber()
+    // Umbrales cortos para la prueba; en la app son 45 s y 55 s.
+    let d = StreamingDictation(transcriber: t, sampleRate: 16000, dictionary: .default, minSegment: 3, maxSegment: 25)
     let audio = voice(3.5) + silence(0.6) + voice(1.2) + silence(0.3)
     for chunk in stride(from: 0, to: audio.count, by: 640) {
       d.append(Array(audio[chunk..<min(audio.count, chunk + 640)]))

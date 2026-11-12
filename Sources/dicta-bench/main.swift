@@ -110,7 +110,26 @@ if CommandLine.arguments.count > 2, CommandLine.arguments[1] == "--audio" {
   try await server.start()
   let data = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[2]))
   let audio = data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
-  print(try await streamTranscribe(audio, transcriber: WhisperServerTranscriber(server: server), dictionary: .default))
+  let t = WhisperServerTranscriber(server: server)
+  // El diccionario guardado en la app instalada (su identificador sale de su Info.plist), o el de por defecto.
+  let appID = Bundle(url: URL(fileURLWithPath: "/Applications/Faro.app"))?.bundleIdentifier
+  let words = appID.flatMap { UserDefaults(suiteName: $0)?.stringArray(forKey: "diccionarioPalabras") } ?? PersonalDictionary.default.words
+  let dict = PersonalDictionary(words: words)
+  let voiced = DictationPipeline.trimSilence(audio, sampleRate: 16000)
+  let natural = "Hablo de " + words.joined(separator: ", ") + "."
+  print("A por tramos, prompt actual:\n ", try await streamTranscribe(audio, transcriber: t, dictionary: dict))
+  var c0 = ContinuousClock.now
+  _ = try await streamTranscribe(audio, transcriber: t, dictionary: dict)
+  print("tiempo total por tramos (sin simular el tiempo real):", ContinuousClock.now - c0)
+  c0 = ContinuousClock.now
+  print("B entero, prompt actual:\n ", try await t.transcribe(voiced, sampleRate: 16000, prompt: dict.whisperPrompt))
+  print("tiempo B:", ContinuousClock.now - c0, "audio", Double(voiced.count) / 16000, "s")
+  c0 = ContinuousClock.now
+  _ = try await t.transcribeRobust(voiced, sampleRate: 16000, prompt: dict.whisperPrompt)
+  print("tiempo D (búsqueda):", ContinuousClock.now - c0)
+  print("C entero, sin prompt:\n ", try await t.transcribe(voiced, sampleRate: 16000, prompt: ""))
+  print("D entero, búsqueda, prompt actual:\n ", try await t.transcribeRobust(voiced, sampleRate: 16000, prompt: dict.whisperPrompt))
+  print("E entero, prompt natural:\n ", try await t.transcribe(voiced, sampleRate: 16000, prompt: natural))
   await server.stop()
   exit(0)
 }

@@ -1,8 +1,11 @@
 import Foundation
 
-/// Transcribe mientras la persona habla: cada vez que hay una pausa natural (tras ≥ 3 s de voz), ese pedazo se
-/// transcribe en segundo plano. Al soltar la tecla solo falta el último pedazo, así la espera no crece con la
-/// duración del dictado. Los pedazos van en orden y cada uno recibe el texto anterior como contexto para Whisper.
+/// Transcribe el dictado. Whisper acierta mucho más con la frase entera que con pedazos de pocos segundos (con la voz
+/// lejana, cortar en cada pausa partía frases y salían cosas como "un TikTok como un balo" por "un dictado como malo"),
+/// y entero tarda poco: unos 1,4 s para 35 s de audio. Así que solo se adelanta trabajo mientras se habla en dictados
+/// largos: tras `minSegment` segundos, en la siguiente pausa, ese pedazo se transcribe en segundo plano. Al soltar la
+/// tecla se transcribe lo que falta. (La búsqueda más cuidadosa de Whisper no ayudó: igual en audio real, algo peor con
+/// voz lejana en el banco, y 0,4 s más lenta.)
 public final class StreamingDictation: @unchecked Sendable {
   private let transcriber: any Transcriber
   private let sampleRate: Int
@@ -15,10 +18,17 @@ public final class StreamingDictation: @unchecked Sendable {
   /// Pedazos enviados a transcribir antes de soltar la tecla (para medir).
   public private(set) var earlySegments = 0
 
-  public init(transcriber: any Transcriber, sampleRate: Int, dictionary: PersonalDictionary) {
+  /// Voz mínima antes de adelantar un pedazo, y largo máximo de un pedazo.
+  let minSegment: Double
+  let maxSegment: Double
+
+  public init(transcriber: any Transcriber, sampleRate: Int, dictionary: PersonalDictionary,
+              minSegment: Double = 45, maxSegment: Double = 55) {
     self.transcriber = transcriber
     self.sampleRate = sampleRate
     self.dictionary = dictionary
+    self.minSegment = minSegment
+    self.maxSegment = maxSegment
   }
 
   /// Agrega audio recién grabado. Se puede llamar desde el hilo de audio.
@@ -28,7 +38,8 @@ public final class StreamingDictation: @unchecked Sendable {
       // Revisar cortes cada cuarto de segundo de audio nuevo, no en cada trozo de 40 ms.
       guard buffer.count - lastCheck >= sampleRate / 4 else { return }
       lastCheck = buffer.count
-      if let cut = SpeechSegmenter.nextCut(in: buffer, from: cursor, sampleRate: sampleRate) {
+      if let cut = SpeechSegmenter.nextCut(in: buffer, from: cursor, sampleRate: sampleRate, minSegment: minSegment,
+        maxSegment: maxSegment) {
         let segment = Array(buffer[cursor..<cut])
         cursor = cut
         earlySegments += 1
