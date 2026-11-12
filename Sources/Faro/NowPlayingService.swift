@@ -177,6 +177,12 @@ final class NowPlayingService {
     if let id = np.appBundleID, PillVisibility.browsers.contains(id), key != confirmedBrowserKey {
       latestBrowser = np
       guard playing else { return }
+      // Con la página activa en la portada, una búsqueda o un canal de YouTube, lo que suena es una vista previa
+      // (empiezan a mitad del video y siguen mientras el puntero esté quieto encima de la miniatura).
+      let url = PillVisibility.focusedPageURL(pid: pid)
+      let preview = PillVisibility.isYouTubeBrowsing(url)
+      Self.log("\(preview ? "vista previa" : "en espera") «\(title)» · pestaña «\(PillVisibility.focusedWindowTitle(pid: pid) ?? "?")» · \(url?.absoluteString ?? "sin dirección")")
+      if preview { return }
       if pendingBrowserKey != key {
         pendingBrowserKey = key
         pendingBrowser?.cancel()
@@ -184,6 +190,9 @@ final class NowPlayingService {
           try? await Task.sleep(for: .seconds(Self.browserConfirmDelay))
           guard let self, !Task.isCancelled, self.pendingBrowserKey == key, let latest = self.latestBrowser,
             latest.playing, latest.title + "|" + latest.artist == key else { return }
+          // Pudo cambiar de página en la espera (de un video a la portada): se vuelve a revisar.
+          if PillVisibility.isYouTubeBrowsing(PillVisibility.focusedPageURL(pid: pid)) { return }
+          Self.log("se muestra «\(latest.title)»")
           self.confirmedBrowserKey = key
           self.show(latest, key: key)
         }
@@ -194,6 +203,20 @@ final class NowPlayingService {
   }
 
   static let browserConfirmDelay = 4.0
+
+  /// Registro de lo que suena en navegadores, para revisar casos raros (vistas previas, videos de otra pestaña).
+  static func log(_ text: String) {
+    let url = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Application Support/Faro/musica-navegador.log")
+    let line = "\(Date()) \(text)\n"
+    if let h = try? FileHandle(forWritingTo: url) {
+      h.seekToEndOfFile()
+      h.write(Data(line.utf8))
+      try? h.close()
+    } else {
+      try? line.write(to: url, atomically: true, encoding: .utf8)
+    }
+  }
   private var confirmedBrowserKey = ""
   private var pendingBrowserKey = ""
   private var pendingBrowser: Task<Void, Never>?

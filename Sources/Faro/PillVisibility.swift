@@ -112,6 +112,23 @@ enum PillVisibility {
     return false
   }
 
+  /// Dirección de la página activa del navegador (con Accesibilidad), si se puede leer.
+  static func focusedPageURL(pid: pid_t) -> URL? {
+    _ = webAreaFillsWindow(pid: pid)  // busca y guarda el área web de la ventana activa
+    guard let cached = cachedWebArea, cached.pid == pid else { return nil }
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(cached.element, "AXURL" as CFString, &value) == .success else { return nil }
+    if let url = value as? URL { return url }
+    return (value as? String).flatMap(URL.init(string:))
+  }
+
+  /// En YouTube, las páginas donde se ve un video; en el resto (portada, búsqueda, canal) lo que suena es una vista previa.
+  static func isYouTubeBrowsing(_ url: URL?) -> Bool {
+    guard let url, let host = url.host?.lowercased(), host == "youtube.com" || host.hasSuffix(".youtube.com") else { return false }
+    let watching = ["/watch", "/shorts", "/live", "/embed", "/playlist"]
+    return !watching.contains { url.path.hasPrefix($0) }
+  }
+
   private static func frame(of element: AXUIElement) -> CGRect? {
     var pos: CFTypeRef?
     var size: CFTypeRef?
