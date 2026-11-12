@@ -150,7 +150,7 @@ final class AppVolumeMixer {
 
   /// El audio de Chrome o Safari sale de procesos ayudantes; macOS sabe qué app es la "responsable" de cada uno.
   private typealias ResponsibleFn = @convention(c) (pid_t) -> pid_t
-  private nonisolated(unsafe) static let responsibleFn: ResponsibleFn? = {
+  private static let responsibleFn: ResponsibleFn? = {
     guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "responsibility_get_pid_responsible_for_pid") else { return nil }
     return unsafeBitCast(sym, to: ResponsibleFn.self)
   }()

@@ -52,7 +52,9 @@ enum AppIcons {
       // Dictados viejos sin bundle id: se busca la app por su nombre.
       if let appName {
         if let i = cache["nombre:" + appName] { return i }
-        if let path = NSWorkspace.shared.fullPath(forApplication: appName) {
+        let candidates = ["/Applications", "/System/Applications", "/System/Applications/Utilities"]
+          .map { "\($0)/\(appName).app" }
+        if let path = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) {
           let i = NSWorkspace.shared.icon(forFile: path)
           cache["nombre:" + appName] = i
           return i

@@ -65,9 +65,11 @@ final class MeetingController {
     let store = self.store
     let id = m.id
     let panel = copilotPanel
+    // Copia inmutable para el cierre que corre en otro hilo.
+    let liveCopilot = copilot
     let mt = MeetingTranscriber(transcriber: app.transcriberForMeetings, sampleRate: AudioRecorder.sampleRate, dictionary: app.settings.dictionary,
                                 minSegment: copilot == nil ? MeetingTranscriber.minSegment : 2,
-                                maxSegment: copilot == nil ? MeetingTranscriber.maxSegment : 12) { segments in
+                                maxSegment: copilot == nil ? MeetingTranscriber.maxSegment : 12) { [weak self] segments in
       // Se guarda cada tramo apenas sale: un cierre inesperado no pierde lo transcrito.
       Task { @MainActor [weak self] in
         guard var saved = store.load(id) else { return }
@@ -75,9 +77,9 @@ final class MeetingController {
         try? store.save(saved)
         self?.liveSegments = segments
       }
-      if let copilot {
+      if let liveCopilot {
         Task {
-          let answers = await copilot.consider(segments)
+          let answers = await liveCopilot.consider(segments)
           await MainActor.run { for a in answers { panel.add(a) } }
         }
       }

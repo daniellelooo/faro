@@ -13,6 +13,9 @@ enum SystemVolume {
     return id
   }
 
+  /// El volumen "virtual principal" (el que mueven las teclas, sin importar cuántos canales tenga la salida) solo se lee y
+  /// escribe con AudioHardwareService. Apple lo marca obsoleto desde 10.11 pero no hay reemplazo y sigue funcionando;
+  /// los dos avisos del compilador por eso son esperados.
   private static func volumeAddress() -> AudioObjectPropertyAddress {
     AudioObjectPropertyAddress(mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
       mScope: kAudioDevicePropertyScopeOutput, mElement: kAudioObjectPropertyElementMain)
