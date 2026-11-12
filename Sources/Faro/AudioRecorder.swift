@@ -134,19 +134,43 @@ final class AudioRecorder: @unchecked Sendable {
   }
 }
 
-/// Qué micrófono usar. Con audífonos Bluetooth (AirPods) como entrada del sistema se prefiere el del Mac: al usar su
-/// micrófono los audífonos pasan a modo llamada, el audio llega con mucha menos calidad (Whisper inventa palabras) y la
-/// música baja de calidad mientras se dicta.
+/// Qué micrófono usar. Por defecto, con audífonos Bluetooth (AirPods) como entrada del sistema se prefiere el del Mac:
+/// al usar su micrófono los audífonos pasan a modo llamada, el audio llega con mucha menos calidad (Whisper inventa
+/// palabras) y la música baja de calidad mientras se dicta.
 enum MicInfo {
-  static let preferBuiltInKey = "microfonoDelMacConBluetooth"
+  /// Micrófono elegido en Ajustes: "auto" (el del Mac si la entrada del sistema es Bluetooth), "sistema" o el UID de
+  /// un micrófono concreto. Si ese micrófono no está conectado, se comporta como "auto".
+  static let choiceKey = "microfonoDictado"
+  static let auto = "auto"
+  static let system = "sistema"
+  private static let legacyKey = "microfonoDelMacConBluetooth"
 
-  static var preferBuiltIn: Bool { UserDefaults.standard.object(forKey: preferBuiltInKey) as? Bool ?? true }
+  static var choice: String {
+    if let c = UserDefaults.standard.string(forKey: choiceKey) { return c }
+    return (UserDefaults.standard.object(forKey: legacyKey) as? Bool) == false ? system : auto
+  }
 
-  /// El micrófono del Mac si la entrada del sistema es Bluetooth y la opción está activa; nil para usar la del sistema.
+  /// El micrófono con el que grabar, o nil para usar el del sistema.
   static func preferredInput() -> AudioDeviceID? {
-    guard preferBuiltIn, let current = defaultInput, isBluetooth(current) else { return nil }
+    let c = choice
+    if c == system { return nil }
+    if c != auto, let id = inputDevices().first(where: { uid(of: $0) == c && isAlive($0) }) {
+      // Si el elegido ya es el del sistema, se graba por el camino normal, que sigue los cambios de formato.
+      return id == defaultInput ? nil : id
+    }
+    guard let current = defaultInput, isBluetooth(current) else { return nil }
     return inputDevices().first { transport(of: $0) == kAudioDeviceTransportTypeBuiltIn && isAlive($0) }
   }
+
+  /// Micrófonos conectados, para elegir en Ajustes: (UID, nombre).
+  static func availableInputs() -> [(uid: String, name: String)] {
+    inputDevices().filter(isAlive).compactMap { id in
+      guard let u = uid(of: id), let n = name(of: id), !n.hasPrefix("CADefaultDeviceAggregate") else { return nil }
+      return (u, n)
+    }
+  }
+
+  static func uid(of id: AudioDeviceID) -> String? { string(id, kAudioDevicePropertyDeviceUID) }
 
   static var defaultInput: AudioDeviceID? {
     var id = AudioDeviceID(0)
@@ -166,9 +190,7 @@ enum MicInfo {
 
   static func name(of id: AudioDeviceID?) -> String? {
     guard let id else { return nil }
-    var name: Unmanaged<CFString>?
-    guard get(id, kAudioObjectPropertyName, &name), let name else { return nil }
-    return name.takeRetainedValue() as String
+    return string(id, kAudioObjectPropertyName)
   }
 
   private static func isBluetooth(_ id: AudioDeviceID) -> Bool {
@@ -202,10 +224,21 @@ enum MicInfo {
     }
   }
 
-  private static func get<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector, _ value: inout T) -> Bool {
+  private static func string(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector) -> String? {
     var addr = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
       mElement: kAudioObjectPropertyElementMain)
-    var size = UInt32(MemoryLayout<T>.size)
+    var size = UInt32(MemoryLayout<CFString?>.size)
+    var value: Unmanaged<CFString>?
+    let status = withUnsafeMutablePointer(to: &value) { AudioObjectGetPropertyData(object, &addr, 0, nil, &size, $0) }
+    guard status == noErr, let value else { return nil }
+    return value.takeRetainedValue() as String
+  }
+
+  /// Propiedades de 32 bits (identificadores de dispositivo, tipo de conexión, si está vivo).
+  private static func get(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector, _ value: inout UInt32) -> Bool {
+    var addr = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain)
+    var size = UInt32(MemoryLayout<UInt32>.size)
     return AudioObjectGetPropertyData(object, &addr, 0, nil, &size, &value) == noErr
   }
 }

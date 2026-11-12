@@ -8,6 +8,7 @@ struct SettingsView: View {
   @State private var keyMessage: String?
   @State private var refresh = 0
   @State private var launch = false
+  @State private var microphones: [(uid: String, name: String)] = []
 
   var body: some View {
     let _ = refresh
@@ -138,8 +139,17 @@ struct SettingsView: View {
           LabeledContent("Transcripción", value: "Whisper large-v3-turbo, local")
           LabeledContent("Limpieza", value: AnthropicCleaner.model)
           LabeledContent("Atajo", value: "Mantener fn · doble toque para manos libres")
-          Toggle("Usar el micrófono del Mac con audífonos Bluetooth", isOn: $settings.builtInMicWithBluetooth)
-          Text("Con unos AirPods conectados, su micrófono se oye mucho peor y la música baja de calidad mientras dictas. Con esto activo, Faro escucha por el micrófono del Mac.")
+          Picker("Micrófono", selection: $settings.microphone) {
+            Text("Automático").tag(MicInfo.auto)
+            Text("El del sistema").tag(MicInfo.system)
+            ForEach(microphones, id: \.uid) { Text($0.name).tag($0.uid) }
+            if settings.microphone != MicInfo.auto, settings.microphone != MicInfo.system,
+              !microphones.contains(where: { $0.uid == settings.microphone }) {
+              Text("No conectado (se usa Automático)").tag(settings.microphone)
+            }
+          }
+          .onAppear { microphones = MicInfo.availableInputs() }
+          Text("Automático usa el micrófono del Mac cuando tienes AirPods u otros audífonos Bluetooth: su micrófono se oye mucho peor y la música baja de calidad mientras dictas. Aplica al dictado y a las reuniones.")
             .font(.caption).foregroundStyle(.secondary)
         }
       }
