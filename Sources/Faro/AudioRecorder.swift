@@ -125,7 +125,10 @@ final class AudioRecorder: @unchecked Sendable {
       lock.unlock()
     }
     onSamples?(samples)
-    level = min(1, rms * 8)
+    // En decibeles, como se oye: el micrófono del Mac capta la voz a unos -43…-30 dB (más bajo que unos audífonos) y
+    // en escala lineal las líneas apenas se movían. -52 dB (ruido de fondo, un ventilador) es cero y -28 dB, el máximo.
+    let db = 20 * log10(max(rms, 1e-6))
+    level = min(1, max(0, (db + 52) / 24))
     chunks += 1
     peak = max(peak, samples.reduce(0) { max($0, abs($1)) })
   }
