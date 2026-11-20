@@ -85,6 +85,8 @@ public struct Meeting: Codable, Equatable, Sendable, Identifiable {
   public var error: String?
   /// Grupo al que pertenece (por ejemplo, una materia: "Visualización de datos"). nil = sin grupo.
   public var group: String?
+  /// El resumen falló por la conexión: se vuelve a intentar solo cuando haya internet.
+  public var summaryPendingNetwork: Bool?
 
   public init(startedAt: Date, includesSystemAudio: Bool, summary: MeetingSummary? = nil) {
     self.startedAt = startedAt

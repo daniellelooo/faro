@@ -457,10 +457,21 @@ struct MeetingDetailView: View {
         if !s.decisions.isEmpty { listSection("Decisiones", "checkmark.seal", s.decisions) }
         if !s.openQuestions.isEmpty { listSection("Pendientes", "questionmark.circle", s.openQuestions) }
       }
+    } else if app.settings.localOnly {
+      Card {
+        Text("Con «Solo local» activo no se generan resúmenes. La transcripción completa está en su pestaña.")
+          .foregroundStyle(.secondary)
+      }
     } else {
       Card {
-        Text(app.settings.localOnly ? "Con «Solo local» activo no se generan resúmenes. La transcripción completa está en su pestaña." : "Todavía no hay resumen.")
-          .foregroundStyle(.secondary)
+        HStack {
+          Text(meeting.segments.isEmpty ? "No hay transcripción para resumir." : "Todavía no hay resumen.")
+            .foregroundStyle(.secondary)
+          Spacer()
+          Button("Resumir") { Task { await meetings.summarize(meeting.id) } }
+            .buttonStyle(.borderedProminent)
+            .disabled(meeting.segments.isEmpty)
+        }
       }
     }
   }

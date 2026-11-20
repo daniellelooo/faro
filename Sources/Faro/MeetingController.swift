@@ -1,6 +1,7 @@
 import AVFoundation
 import AppKit
 import FaroCore
+import Network
 import Observation
 
 /// Estado de la grabación de reuniones, compartido por la ventana, el menú y la píldora.
@@ -258,6 +259,37 @@ final class MeetingController {
     reload()
   }
 
+  private var pathMonitor: NWPathMonitor?
+  private var retrying = false
+
+  /// Vigila la conexión y, cuando hay internet, resume las reuniones cuyo resumen falló por la red.
+  func startNetworkRetry() {
+    guard pathMonitor == nil else { return }
+    let monitor = NWPathMonitor()
+    monitor.pathUpdateHandler = { [weak self] path in
+      guard path.status == .satisfied else { return }
+      Task { @MainActor in await self?.retryPendingSummaries() }
+    }
+    monitor.start(queue: DispatchQueue(label: "faro.red"))
+    pathMonitor = monitor
+  }
+
+  func retryPendingSummaries() async {
+    guard !retrying, let app, !app.settings.localOnly else { return }
+    retrying = true
+    defer { retrying = false }
+    for m in store.list() where m.summaryPendingNetwork == true && m.status == .ready && m.summary == nil {
+      await summarize(m.id)
+    }
+  }
+
+  /// Errores de conexión (sin internet, se cayó la red, tiempo agotado): esos se reintentan solos.
+  nonisolated static func isNetworkError(_ error: Error) -> Bool {
+    guard let e = error as? URLError else { return false }
+    return [.notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotFindHost, .cannotConnectToHost,
+      .dnsLookupFailed, .internationalRoamingOff, .dataNotAllowed].contains(e.code)
+  }
+
   func summarize(_ id: UUID) async {
     guard var m = store.load(id), let app else { return }
     if app.settings.localOnly || m.segments.isEmpty {
@@ -274,9 +306,16 @@ final class MeetingController {
     do {
       m.summary = try await MeetingSummarizer(apiKey: app.apiKey).summarize(transcript: m.transcript, vocabulary: app.settings.words)
       m.status = .ready
+      m.summaryPendingNetwork = nil
     } catch {
       m.status = .ready
-      m.error = "Sin resumen: \(error.localizedDescription)"
+      if Self.isNetworkError(error) {
+        m.summaryPendingNetwork = true
+        m.error = "Sin resumen: se perdió la conexión a internet. Se va a resumir solo cuando vuelva."
+      } else {
+        m.summaryPendingNetwork = nil
+        m.error = "Sin resumen: \(error.localizedDescription)"
+      }
     }
     try? store.save(m)
     reload()

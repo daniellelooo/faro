@@ -132,6 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       updateMenu()
     }
     meetings.app = self
+    meetings.startNetworkRetry()
     hotkey.onAction = { [weak self] in self?.handle($0) }
     _ = hotkey.start()
     mediaKeys.enabled = settings.volumeBrightnessInIsland

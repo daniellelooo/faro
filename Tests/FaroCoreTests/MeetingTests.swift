@@ -98,3 +98,19 @@ final class SavedBox: @unchecked Sendable {
     #expect(!s.openQuestions.isEmpty)
   }
 }
+
+@Suite struct MeetingPendingSummaryTests {
+  @Test func unaReunionGuardadaAntesSeSigueLeyendo() throws {
+    let json = #"{"id":"A19A016A-FA4A-4C6E-AE2A-D1241D18A1DD","startedAt":"2026-11-19T21:06:37Z","duration":1700,"status":"ready","includesSystemAudio":false,"segments":[],"error":"Sin resumen"}"#
+    let m = try JSONDecoder.iso.decode(Meeting.self, from: Data(json.utf8))
+    #expect(m.summaryPendingNetwork == nil)
+    #expect(m.error == "Sin resumen")
+  }
+
+  @Test func laMarcaDeReintentoSeGuarda() throws {
+    var m = Meeting(startedAt: Date(timeIntervalSince1970: 0), includesSystemAudio: false)
+    m.summaryPendingNetwork = true
+    let back = try JSONDecoder.iso.decode(Meeting.self, from: JSONEncoder.iso.encode(m))
+    #expect(back.summaryPendingNetwork == true)
+  }
+}
