@@ -71,6 +71,27 @@ import Testing
     #expect(board.workingCount == 0)
   }
 
+  @Test func conTareasEnSegundoPlanoLaSesionSigueTrabajando() {
+    var board = ClaudeActivityBoard()
+    let t = Date()
+    board.apply(HookEvent(name: "UserPromptSubmit", sessionID: "s", cwd: "/x/kivo", date: t, message: nil))
+    let first = board.apply(HookEvent(name: "Stop", sessionID: "s", cwd: "/x/kivo", date: t.addingTimeInterval(20), message: nil, backgroundTasks: 2))
+    #expect(first == nil)
+    #expect(board.workingCount == 1 && board.sessions["s"]?.inBackground == true)
+    // Una hora después sigue (una compilación larga no la apaga a los 30 min).
+    board.expire(now: t.addingTimeInterval(3600))
+    #expect(board.workingCount == 1)
+    // Al volver de las tareas, el turno final sin nada pendiente avisa que terminó, con el tiempo total.
+    let done = board.apply(HookEvent(name: "Stop", sessionID: "s", cwd: "/x/kivo", date: t.addingTimeInterval(4000), message: nil))
+    #expect(done == .finished(project: "kivo", seconds: 4000))
+    #expect(board.workingCount == 0)
+  }
+
+  @Test func elEventoGuardaCuantasTareasQuedanEnSegundoPlano() {
+    let line = #"{"hook_event_name":"Stop","session_id":"s","_dicta_t":1,"_dicta_segundo_plano":3}"#
+    #expect(HookEvent.decode(Data(line.utf8))?.backgroundTasks == 3)
+  }
+
   @Test func soloElMensajeEscritoMarcaLaUltimaSesionUsada() {
     var board = ClaudeActivityBoard()
     let t = Date()

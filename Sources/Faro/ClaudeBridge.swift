@@ -10,9 +10,16 @@ enum ClaudeBridge {
   static func handleHook() {
     let data = readStdin()
     guard var obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+    // Tareas que siguen corriendo en segundo plano al terminar el turno (comandos, agentes, monitores): solo cuántas,
+    // nunca su descripción ni el comando.
+    let background = (obj["background_tasks"] as? [[String: Any]])?.filter { t in
+      let status = (t["status"] as? String ?? "").lowercased()
+      return !["completed", "failed", "killed", "cancelled", "canceled", "stopped", "done", "error"].contains(status)
+    }.count
     // Solo lo necesario; nada del prompt ni de la respuesta.
     obj = obj.filter { ["hook_event_name", "session_id", "cwd", "notification_type", "message"].contains($0.key) }
     obj["_dicta_t"] = Date().timeIntervalSince1970
+    if let background { obj["_dicta_segundo_plano"] = background }
     guard var line = try? JSONSerialization.data(withJSONObject: obj) else { return }
     line.append(0x0A)
     let url = ClaudeIntegration.eventsFile

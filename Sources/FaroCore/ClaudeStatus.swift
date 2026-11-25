@@ -43,8 +43,12 @@ public struct HookEvent: Sendable, Equatable {
   public var date: Date
   public var message: String?
   public var notificationType: String?
+  /// En Stop: tareas que siguen corriendo en segundo plano (la sesión sigue trabajando aunque el turno terminó).
+  public var backgroundTasks: Int = 0
 
-  public init(name: String, sessionID: String, cwd: String?, date: Date, message: String?, notificationType: String? = nil) {
+  public init(name: String, sessionID: String, cwd: String?, date: Date, message: String?, notificationType: String? = nil,
+    backgroundTasks: Int = 0) {
+    self.backgroundTasks = backgroundTasks
     self.name = name
     self.sessionID = sessionID
     self.cwd = cwd
@@ -59,7 +63,8 @@ public struct HookEvent: Sendable, Equatable {
     else { return nil }
     let t = (o["_dicta_t"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970
     return HookEvent(name: name, sessionID: sid, cwd: o["cwd"] as? String, date: Date(timeIntervalSince1970: t),
-      message: o["message"] as? String, notificationType: o["notification_type"] as? String)
+      message: o["message"] as? String, notificationType: o["notification_type"] as? String,
+      backgroundTasks: (o["_dicta_segundo_plano"] as? NSNumber)?.intValue ?? 0)
   }
 }
 
@@ -81,6 +86,8 @@ public struct ClaudeActivityBoard: Sendable {
     public var title: String? = nil
     /// Último mensaje escrito en la sesión: dice en qué chat está la persona (los eventos de herramientas no).
     public var lastPrompt: Date? = nil
+    /// Terminó su turno pero dejó tareas corriendo en segundo plano: cuenta como trabajando.
+    public var inBackground = false
 
     public var displayName: String { title ?? project }
   }
@@ -117,6 +124,7 @@ public struct ClaudeActivityBoard: Sendable {
     switch e.name {
     case "UserPromptSubmit", "PreToolUse", "PostToolUse":
       if e.name == "UserPromptSubmit" { s.lastPrompt = e.date }
+      s.inBackground = false
       if s.state != .working {
         if s.state == .idle || s.workingSince == nil { s.workingSince = e.date }
         s.state = .working
@@ -130,7 +138,14 @@ public struct ClaudeActivityBoard: Sendable {
       guard let type = e.notificationType, waitingTypes.contains(type), s.state != .waiting else { return nil }
       s.state = .waiting
       return .needsYou(project: s.displayName)
+    case "Stop" where e.backgroundTasks > 0:
+      // El turno terminó pero quedan comandos o agentes corriendo: Claude vuelve solo cuando acaben.
+      if s.state != .working || s.workingSince == nil { s.workingSince = s.workingSince ?? e.date }
+      s.state = .working
+      s.inBackground = true
+      return nil
     case "Stop", "StopFailure":
+      s.inBackground = false
       let wasBusy = s.state != .idle
       let seconds = s.workingSince.map { Int(e.date.timeIntervalSince($0).rounded()) } ?? 0
       s.state = .idle
@@ -146,7 +161,8 @@ public struct ClaudeActivityBoard: Sendable {
 
   /// Sesiones "trabajando" sin eventos en mucho tiempo (por ejemplo, Claude Code se cerró a la fuerza) pasan a reposo.
   public mutating func expire(now: Date, after seconds: TimeInterval = 1800) {
-    for (id, s) in sessions where s.state != .idle && now.timeIntervalSince(s.lastEvent) > seconds {
+    // Las tareas en segundo plano pueden tardar más (una compilación larga, un agente): se les da hasta 3 horas.
+    for (id, s) in sessions where s.state != .idle && now.timeIntervalSince(s.lastEvent) > (s.inBackground ? max(seconds, 3 * 3600) : seconds) {
       sessions[id]?.state = .idle
       sessions[id]?.workingSince = nil
     }
