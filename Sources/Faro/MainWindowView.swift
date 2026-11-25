@@ -2,30 +2,39 @@ import FaroCore
 import SwiftUI
 
 enum Pane: String, CaseIterable, Identifiable {
-  case home, meetings, ai, tools, history, dictionary, styles, settings
+  case home, time, meetings, voice, ai, tools, settings
   var id: String { rawValue }
   var title: String {
     switch self {
-    case .home: return "Inicio"
+    case .home: return "Hoy"
+    case .time: return "Tiempo"
     case .meetings: return "Reuniones"
-    case .ai: return "IA"
-    case .tools: return "Herramientas"
-    case .history: return "Historial"
-    case .dictionary: return "Diccionario"
-    case .styles: return "Estilos"
+    case .voice: return "Voz"
+    case .ai: return "Claude"
+    case .tools: return "Mac"
     case .settings: return "Ajustes"
     }
   }
   var symbol: String {
     switch self {
-    case .home: return "house"
-    case .meetings: return "person.3"
+    case .home: return "sun.max.fill"
+    case .time: return "chart.bar.xaxis"
+    case .meetings: return "person.2.fill"
+    case .voice: return "waveform"
     case .ai: return "sparkles"
-    case .tools: return "wrench.and.screwdriver"
-    case .history: return "clock.arrow.circlepath"
-    case .dictionary: return "character.book.closed"
-    case .styles: return "textformat"
-    case .settings: return "gearshape"
+    case .tools: return "macbook"
+    case .settings: return "gearshape.fill"
+    }
+  }
+  var tint: Color {
+    switch self {
+    case .home: return .orange
+    case .time: return .blue
+    case .meetings: return Theme.coral
+    case .voice: return Theme.violet
+    case .ai: return Color.claude
+    case .tools: return .teal
+    case .settings: return .gray
     }
   }
 }
@@ -35,7 +44,6 @@ struct MainWindowView: View {
   @Bindable var settings: AppSettings
   @Bindable var model: AppModel
   @State private var pane: Pane? = .home
-  @State private var appeared = false
 
   var body: some View {
     NavigationSplitView {
@@ -45,49 +53,43 @@ struct MainWindowView: View {
             .resizable()
             .frame(width: 30, height: 30)
           VStack(alignment: .leading, spacing: 1) {
-            Text("Faro").font(.system(size: 15, weight: .semibold, design: .rounded))
+            Text("Faro").font(.system(size: 14, weight: .semibold))
             EngineBadge(status: model.engine, paused: settings.paused)
           }
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 34)
-        .padding(.bottom, 14)
+        .padding(.horizontal, 16)
+        .padding(.top, 38)
+        .padding(.bottom, 10)
         List(selection: $pane) {
-          Label(Pane.home.title, systemImage: Pane.home.symbol).tag(Pane.home)
-          Section("Claude y Mac") {
-            ForEach([Pane.ai, .tools]) { p in Label(p.title, systemImage: p.symbol).tag(p) }
-          }
-          Section("Dictado") {
-            ForEach([Pane.history, .meetings, .dictionary, .styles]) { p in Label(p.title, systemImage: p.symbol).tag(p) }
-          }
           Section {
-            Label(Pane.settings.title, systemImage: Pane.settings.symbol).tag(Pane.settings)
+            ForEach([Pane.home, .time, .meetings]) { row($0) }
+          }
+          Section("Herramientas") {
+            ForEach([Pane.voice, .ai, .tools]) { row($0) }
           }
         }
         .listStyle(.sidebar)
-        Spacer(minLength: 0)
-        HStack(spacing: 8) {
-          Image(systemName: "rectangle.topthird.inset.filled").foregroundStyle(.secondary)
-          Text("Pasa el puntero por el notch para abrir la isla · fn para dictar").font(.caption).foregroundStyle(.secondary).lineLimit(2)
-        }
-        .padding(14)
+        List(selection: $pane) { row(.settings) }
+          .listStyle(.sidebar)
+          .scrollDisabled(true)
+          .frame(height: 44)
+          .padding(.bottom, 8)
       }
-      .navigationSplitViewColumnWidth(min: 200, ideal: 210, max: 240)
+      .navigationSplitViewColumnWidth(min: 190, ideal: 205, max: 240)
     } detail: {
       Group {
         switch pane ?? .home {
         case .home: HomeView(app: app, settings: settings, model: model, pane: $pane)
+        case .time: TimeView(app: app, tracker: app.activity)
         case .meetings: MeetingsView(app: app, meetings: app.meetings)
+        case .voice: VoiceView(app: app, settings: settings, model: model)
         case .ai: AIView(app: app, claude: app.claude)
         case .tools: ToolsView(app: app, brew: app.brew)
-        case .history: HistoryView(app: app, model: model)
-        case .dictionary: DictionaryView(settings: settings)
-        case .styles: StylesView(settings: settings)
         case .settings: SettingsView(app: app, settings: settings)
         }
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(Color(nsColor: .windowBackgroundColor))
+      .background(WindowMaterial(material: .underWindowBackground).ignoresSafeArea())
     }
     .tint(Theme.violet)
     .onAppear {
@@ -100,6 +102,65 @@ struct MainWindowView: View {
       if let p {
         pane = p
         model.requestedPane = nil
+      }
+    }
+  }
+
+  func row(_ p: Pane) -> some View {
+    Label {
+      HStack {
+        Text(p.title)
+        Spacer()
+        if p == .time, app.activity.enabled, app.activity.todayTotals.work >= 60 {
+          Text(ActivityTotals.format(app.activity.todayTotals.work, short: true))
+            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+        }
+      }
+    } icon: {
+      IconTile(symbol: p.symbol, tint: p.tint, size: 20)
+    }
+    .tag(p)
+  }
+}
+
+/// Voz: el historial de dictados, el diccionario y los estilos, en una sola sección con pestañas.
+struct VoiceView: View {
+  let app: AppDelegate
+  @Bindable var settings: AppSettings
+  @Bindable var model: AppModel
+  enum Tab: String, CaseIterable, Identifiable {
+    case history = "Historial", dictionary = "Diccionario", styles = "Estilos"
+    var id: String { rawValue }
+  }
+  @State private var tab: Tab = .history
+
+  var subtitle: String {
+    switch tab {
+    case .history: return "Tus últimos 100 dictados. Se guardan solo en este Mac."
+    case .dictionary: return "Nombres, marcas y términos que Faro debe escribir exactamente así."
+    case .styles: return "Cómo queda el texto según la app donde dictas."
+    }
+  }
+
+  var body: some View {
+    VStack(spacing: 0) {
+      VStack(alignment: .leading, spacing: 14) {
+        PaneHeader(title: "Voz", subtitle: subtitle)
+        Picker("", selection: $tab) {
+          ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(maxWidth: 360)
+      }
+      .padding(.horizontal, 28)
+      .padding(.top, 28)
+      .frame(maxWidth: 880, alignment: .leading)
+      .frame(maxWidth: .infinity)
+      switch tab {
+      case .history: HistoryView(app: app, model: model)
+      case .dictionary: DictionaryView(settings: settings)
+      case .styles: StylesView(settings: settings)
       }
     }
   }
@@ -130,7 +191,7 @@ struct PaneHeader: View {
   let subtitle: String
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
-      Text(title).font(.system(size: 26, weight: .bold, design: .rounded))
+      Text(title).font(.system(size: 26, weight: .bold))
       Text(subtitle).font(.callout).foregroundStyle(.secondary)
     }
     .frame(maxWidth: .infinity, alignment: .leading)

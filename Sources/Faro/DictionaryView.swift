@@ -8,7 +8,6 @@ struct DictionaryView: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 18) {
-        PaneHeader(title: "Diccionario", subtitle: "Nombres, marcas y términos que Faro debe escribir exactamente así.")
         Card {
           HStack {
             TextField("Agregar palabra, por ejemplo Supabase o el nombre de tu empresa", text: $newWord)
@@ -43,7 +42,8 @@ struct DictionaryView: View {
           .font(.caption)
           .foregroundStyle(.secondary)
       }
-      .padding(28)
+      .padding(.horizontal, 28).padding(.vertical, 18)
+      .frame(maxWidth: 880, alignment: .leading).frame(maxWidth: .infinity)
       .frame(maxWidth: 820, alignment: .leading)
       .frame(maxWidth: .infinity)
     }

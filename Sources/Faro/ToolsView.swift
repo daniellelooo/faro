@@ -9,10 +9,10 @@ struct ToolsView: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 18) {
-        PaneHeader(title: "Herramientas", subtitle: "Utilidades para tu Mac. También están en la isla, en el notch.")
+        PaneHeader(title: "Mac", subtitle: "Utilidades para tu Mac. También están en la isla, en el notch.")
         Card(padding: 18) {
           HStack(spacing: 14) {
-            Image(systemName: "keyboard").font(.title).foregroundStyle(Theme.violet).frame(width: 44)
+            IconTile(symbol: "keyboard.fill", tint: .indigo, size: 34)
             VStack(alignment: .leading, spacing: 2) {
               Text("Limpieza de teclado").font(.headline)
               Text("Bloquea todas las teclas durante 60 segundos para limpiarlo sin escribir nada.").font(.callout).foregroundStyle(.secondary)
@@ -26,7 +26,7 @@ struct ToolsView: View {
         Card(padding: 18) {
           VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 14) {
-              Image(systemName: "shippingbox").font(.title).foregroundStyle(Theme.violet).frame(width: 44)
+              IconTile(symbol: "shippingbox.fill", tint: .brown, size: 34)
               VStack(alignment: .leading, spacing: 2) {
                 Text("Homebrew").font(.headline)
                 Group {
@@ -78,7 +78,7 @@ struct QuickToolsCard: View {
   var body: some View {
     Card(padding: 18) {
       VStack(alignment: .leading, spacing: 14) {
-        row(symbol: "cup.and.saucer", title: "Mantener despierto",
+        row(symbol: "cup.and.saucer.fill", title: "Mantener despierto",
             detail: quick.isAwake ? (quick.awakeUntil.map { "Activo hasta las " + $0.formatted(date: .omitted, time: .shortened) } ?? "Activo hasta que lo apagues")
               : "Evita que el Mac se duerma o apague la pantalla (descargas largas, presentaciones).") {
           if quick.isAwake {
@@ -109,9 +109,11 @@ struct QuickToolsCard: View {
     }
   }
 
+  static let tints: [String: Color] = ["cup.and.saucer.fill": .orange, "timer": .red, "eyedropper": .pink]
+
   func row<B: View>(symbol: String, title: String, detail: String, @ViewBuilder buttons: () -> B) -> some View {
     HStack(spacing: 14) {
-      Image(systemName: symbol).font(.title2).foregroundStyle(Theme.violet).frame(width: 44)
+      IconTile(symbol: symbol, tint: Self.tints[symbol] ?? .gray, size: 34)
       VStack(alignment: .leading, spacing: 2) {
         Text(title).font(.headline)
         Text(detail).font(.callout).foregroundStyle(.secondary)

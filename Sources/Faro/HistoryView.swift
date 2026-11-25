@@ -19,7 +19,6 @@ struct HistoryView: View {
     let groups = Dictionary(grouping: filtered) { Calendar.current.startOfDay(for: $0.date) }.sorted { $0.key > $1.key }
     VStack(alignment: .leading, spacing: 16) {
       HStack(alignment: .bottom) {
-        PaneHeader(title: "Historial", subtitle: "Tus últimos 100 dictados. Se guardan solo en este Mac.")
         TextField("Buscar", text: $query)
           .textFieldStyle(.roundedBorder)
           .frame(width: 220)
@@ -50,7 +49,8 @@ struct HistoryView: View {
         }
       }
     }
-    .padding(28)
+    .padding(.horizontal, 28).padding(.vertical, 18)
+    .frame(maxWidth: 880, alignment: .leading).frame(maxWidth: .infinity)
   }
 
   func dayTitle(_ d: Date) -> String {

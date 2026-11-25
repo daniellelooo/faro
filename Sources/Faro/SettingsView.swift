@@ -16,7 +16,7 @@ struct SettingsView: View {
       VStack(alignment: .leading, spacing: 18) {
         PaneHeader(title: "Ajustes", subtitle: "Permisos, limpieza con Claude y comportamiento de Faro.")
 
-        SettingsSection(title: "Permisos de macOS", symbol: "lock.shield") {
+        SettingsSection(title: "Permisos de macOS", symbol: "lock.shield.fill", tint: .blue) {
           PermissionRow(title: "Micrófono", detail: "Para escucharte mientras mantienes fn.", ok: Permissions.microphone) {
             Task {
               _ = await Permissions.requestMicrophone()
@@ -41,7 +41,7 @@ struct SettingsView: View {
             .font(.caption).foregroundStyle(.secondary).padding(.top, 4)
         }
 
-        SettingsSection(title: "Limpieza con Claude", symbol: "sparkles") {
+        SettingsSection(title: "Limpieza con Claude", symbol: "sparkles", tint: Color.claude) {
           Toggle("Solo local: nunca enviar texto a Claude", isOn: $settings.localOnly)
           Text("Tu voz siempre se queda en este Mac. Con la limpieza activa, solo el texto transcrito y el texto alrededor del cursor van a Claude Haiku.")
             .font(.caption).foregroundStyle(.secondary)
@@ -59,7 +59,7 @@ struct SettingsView: View {
           if let keyMessage { Text(keyMessage).font(.caption).foregroundStyle(.secondary) }
         }
 
-        SettingsSection(title: "Copiloto de reuniones", symbol: "text.bubble") {
+        SettingsSection(title: "Copiloto de reuniones", symbol: "text.bubble.fill", tint: Theme.coral) {
           HStack {
             TextField("Carpeta de notas (vacío = desactivado)", text: $settings.copilotNotesFolder)
               .textFieldStyle(.roundedBorder)
@@ -69,7 +69,7 @@ struct SettingsView: View {
             .font(.caption).foregroundStyle(.secondary)
         }
 
-        SettingsSection(title: "Comportamiento", symbol: "slider.horizontal.3") {
+        SettingsSection(title: "Comportamiento", symbol: "slider.horizontal.3", tint: .gray) {
           Picker("Indicador al dictar", selection: $settings.indicatorStyle) {
             ForEach(IndicatorStyle.allCases) { Text($0.title).tag($0) }
           }
@@ -97,7 +97,7 @@ struct SettingsView: View {
           }
         }
 
-        SettingsSection(title: "Scroll", symbol: "arrow.up.arrow.down") {
+        SettingsSection(title: "Scroll", symbol: "arrow.up.arrow.down", tint: .teal) {
           Toggle("Invertir el scroll del mouse", isOn: $settings.invertMouseScroll)
             .onChange(of: settings.invertMouseScroll) { _, _ in app.scroll.inversion = settings.scrollInversion }
           Toggle("Invertir el scroll del trackpad y del Magic Mouse", isOn: $settings.invertTrackpadScroll)
@@ -111,7 +111,7 @@ struct SettingsView: View {
         }
 
         if settings.indicatorStyle == .island {
-          SettingsSection(title: "Isla en reposo", symbol: "rectangle.topthird.inset.filled") {
+          SettingsSection(title: "Isla en reposo", symbol: "rectangle.topthird.inset.filled", tint: .indigo) {
             IdlePreview(state: app.overlay.state)
               .frame(maxWidth: .infinity)
               .padding(.vertical, 6)
@@ -128,14 +128,14 @@ struct SettingsView: View {
           }
         }
 
-        SettingsSection(title: "Sistema", symbol: "macwindow") {
+        SettingsSection(title: "Sistema", symbol: "macwindow", tint: .gray) {
           Toggle("Abrir Faro al iniciar sesión", isOn: $launch)
             .onChange(of: launch) { _, v in app.launchAtLogin = v }
           Toggle("Pausar el dictado", isOn: $settings.paused)
             .onChange(of: settings.paused) { _, _ in app.updateMenu() }
         }
 
-        SettingsSection(title: "Motor", symbol: "cpu") {
+        SettingsSection(title: "Motor", symbol: "cpu.fill", tint: .green) {
           LabeledContent("Transcripción", value: "Whisper large-v3-turbo, local")
           LabeledContent("Limpieza", value: AnthropicCleaner.model)
           LabeledContent("Atajo", value: "Mantener fn · doble toque para manos libres")
@@ -175,10 +175,14 @@ struct SettingsView: View {
 struct SettingsSection<Content: View>: View {
   let title: String
   let symbol: String
+  var tint: Color = .gray
   @ViewBuilder var content: Content
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      Label(title, systemImage: symbol).font(.headline)
+      HStack(spacing: 8) {
+        IconTile(symbol: symbol, tint: tint, size: 22)
+        Text(title).font(.headline)
+      }
       Card { VStack(alignment: .leading, spacing: 10) { content } }
     }
   }

@@ -25,6 +25,20 @@ struct HomeView: View {
       VStack(alignment: .leading, spacing: 22) {
         PaneHeader(title: greeting, subtitle: dateLine)
 
+        if app.activity.enabled {
+          TodayTimeCard(tracker: app.activity) { pane = .time }
+        }
+        if let last = app.activity.lastSummary, !app.activity.openPending.isEmpty {
+          Card {
+            VStack(alignment: .leading, spacing: 10) {
+              SectionTitle(title: "Pendiente de \(pendingDayName(last.day))", subtitle: last.summary.verdict.isEmpty ? nil : last.summary.verdict) {
+                Button("Ver resumen") { pane = .time }.buttonStyle(.link)
+              }
+              PendingList(tracker: app.activity, items: last.summary.pending, day: last.day)
+            }
+          }
+        }
+
         AttentionCard(items: attention)
 
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
@@ -41,7 +55,7 @@ struct HomeView: View {
           ShortcutTile(symbol: "shippingbox.fill", tint: .brown, title: "Homebrew",
             value: app.brew.outdated.isEmpty ? "Al día" : "\(app.brew.outdated.count) por actualizar") { pane = .tools }
           ShortcutTile(symbol: app.quick.timerRunning ? "timer" : "cup.and.saucer.fill", tint: .yellow, title: "Rápidas", value: quickValue) { pane = .tools }
-          ShortcutTile(symbol: "waveform", tint: Theme.violet, title: "Dictado", value: dictationValue) { pane = .history }
+          ShortcutTile(symbol: "waveform", tint: Theme.violet, title: "Dictado", value: dictationValue) { pane = .voice }
           ShortcutTile(symbol: "person.3.fill", tint: Theme.coral, title: "Reuniones", value: meetingsValue) { pane = .meetings }
         }
       }
@@ -83,6 +97,14 @@ struct HomeView: View {
   }
 
   var attention: [AttentionItem] { app.attentionItems() }
+
+  func pendingDayName(_ day: String) -> String {
+    let yesterday = ActivityStore.dayKey(Calendar.current.date(byAdding: .day, value: -1, to: Date())!)
+    if day == yesterday { return "ayer" }
+    let f = DateFormatter()
+    f.dateFormat = "yyyy-MM-dd"
+    return f.date(from: day).map { $0.formatted(.dateTime.weekday(.wide).locale(Locale(identifier: "es_CO"))) } ?? day
+  }
 
 
   var dictationValue: String {
@@ -415,11 +437,7 @@ struct ShortcutTile: View {
     Button(action: action) {
       Card(padding: 14) {
         HStack(spacing: 10) {
-          ZStack {
-            RoundedRectangle(cornerRadius: 8, style: .continuous).fill(tint.opacity(0.15))
-            Image(systemName: symbol).foregroundStyle(tint)
-          }
-          .frame(width: 38, height: 38)
+          IconTile(symbol: symbol, tint: tint, size: 34)
           VStack(alignment: .leading, spacing: 2) {
             Text(title).font(.callout.weight(.semibold))
             Text(value).font(.caption).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
@@ -440,8 +458,8 @@ struct StatTile: View {
   var body: some View {
     Card(padding: 16) {
       VStack(alignment: .leading, spacing: 8) {
-        Image(systemName: symbol).foregroundStyle(Theme.violet)
-        Text(value).font(.system(size: 26, weight: .bold, design: .rounded)).monospacedDigit()
+        IconTile(symbol: symbol, tint: Theme.violet, size: 22)
+        Text(value).font(.system(size: 24, weight: .semibold)).monospacedDigit()
         Text(label).font(.caption).foregroundStyle(.secondary).lineLimit(1)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -543,5 +561,52 @@ struct ProjectsSection: View {
         }
       }
     }
+  }
+}
+
+/// Hoy en Inicio: horas de trabajo, la línea del día y en qué se está ahora. Clic abre Tiempo.
+struct TodayTimeCard: View {
+  let tracker: ActivityTracker
+  let open: () -> Void
+  var body: some View {
+    TimelineView(.periodic(from: .now, by: 30)) { _ in
+      let totals = tracker.todayTotals
+      Button(action: open) {
+        Card(padding: 18) {
+          VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top) {
+              VStack(alignment: .leading, spacing: 3) {
+                Text("Trabajo hoy").font(.callout.weight(.medium)).foregroundStyle(.secondary)
+                Text(ActivityTotals.format(totals.work)).font(.system(size: 30, weight: .semibold)).monospacedDigit()
+                Text(nowLine + (totals.leisure >= 60 ? " · \(ActivityTotals.format(totals.leisure)) de ocio" : ""))
+                  .font(.callout).foregroundStyle(.secondary)
+              }
+              Spacer()
+              VStack(alignment: .trailing, spacing: 5) {
+                ForEach(totals.byProject.filter { $0.seconds >= 60 }.prefix(4), id: \.name) { p in
+                  HStack(spacing: 6) {
+                    Circle().fill(Color(nsColor: tracker.color(for: p.name))).frame(width: 7, height: 7)
+                    Text(p.name.isEmpty ? "Sin proyecto" : p.name).font(.callout)
+                    Text(ActivityTotals.format(p.seconds, short: true)).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+                  }
+                }
+              }
+            }
+            if tracker.today.isEmpty {
+              Text("Faro empezó a registrar tu día; en unos minutos aparece aquí.").font(.callout).foregroundStyle(.secondary)
+            } else {
+              DayTimeline(spans: tracker.today, tracker: tracker, height: 12, showsHours: false)
+            }
+          }
+        }
+      }
+      .buttonStyle(.plain)
+    }
+  }
+
+  var nowLine: String {
+    guard let c = tracker.current else { return "Lejos del computador" }
+    if c.kind == .leisure { return "Ahora: ocio" }
+    return c.project.map { "Ahora en \($0)" } ?? "Ahora: trabajo sin proyecto"
   }
 }

@@ -11,7 +11,7 @@ struct AIView: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 18) {
-        PaneHeader(title: "IA", subtitle: "Tus límites de Claude, cuánto costaría tu uso por API y en qué proyectos trabajas.")
+        PaneHeader(title: "Claude", subtitle: "Tus límites de Claude, cuánto costaría tu uso por API y en qué proyectos trabajas.")
 
         if !claude.connected {
           Card(padding: 20) {

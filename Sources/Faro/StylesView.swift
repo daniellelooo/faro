@@ -14,7 +14,6 @@ struct StylesView: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 18) {
-        PaneHeader(title: "Estilos", subtitle: "Cómo queda el texto según la app donde dictas.")
         ForEach(AppCategory.allCases) { category in
           Card {
             VStack(alignment: .leading, spacing: 12) {
@@ -42,7 +41,8 @@ struct StylesView: View {
           }
         }
       }
-      .padding(28)
+      .padding(.horizontal, 28).padding(.vertical, 18)
+      .frame(maxWidth: 880, alignment: .leading).frame(maxWidth: .infinity)
       .frame(maxWidth: 820, alignment: .leading)
       .frame(maxWidth: .infinity)
     }

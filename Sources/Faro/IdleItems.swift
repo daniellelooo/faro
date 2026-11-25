@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Lo que la isla puede mostrar a cada lado del notch cuando no pasa nada.
 enum IdleItem: String, CaseIterable, Identifiable, Codable {
-  case attention, projects, shelf, limit5h, limitWeek, costToday, clock, date, battery, faro, nothing
+  case attention, projects, shelf, limit5h, limitWeek, costToday, timeToday, clock, date, battery, faro, nothing
   var id: String { rawValue }
 
   var title: String {
@@ -15,6 +15,7 @@ enum IdleItem: String, CaseIterable, Identifiable, Codable {
     case .limit5h: return "Límite de 5 horas"
     case .limitWeek: return "Límite semanal"
     case .costToday: return "Gasto de hoy (precio API)"
+    case .timeToday: return "Tiempo trabajado hoy"
     case .clock: return "Hora"
     case .date: return "Fecha"
     case .battery: return "Batería"
@@ -32,6 +33,7 @@ enum IdleItem: String, CaseIterable, Identifiable, Codable {
     case .limit5h: return 48
     case .limitWeek: return 68
     case .costToday: return 38
+    case .timeToday: return 48
     case .clock: return 36
     case .date: return 44
     case .battery: return 46
@@ -98,6 +100,21 @@ struct IdleItemView: View {
     case .costToday:
       let cost = state.claude?.costToday ?? 0
       text(cost >= 100 ? "$\(Int(cost))" : String(format: "$%.0f", cost), color: .white.opacity(0.75))
+    case .timeToday:
+      if let tracker = state.app?.activity, tracker.enabled {
+        TimelineView(.periodic(from: .now, by: 30)) { _ in
+          let current = tracker.current
+          HStack(spacing: 4) {
+            Circle()
+              .fill(current?.kind == .leisure ? Color.pink : (current == nil ? Color.white.opacity(0.35) : Color(nsColor: tracker.color(for: current?.project))))
+              .frame(width: 6, height: 6)
+            text(ActivityTotals.format(tracker.todayTotals.work, short: true), color: .white.opacity(0.8))
+          }
+          .help("Trabajo de hoy" + (current?.project.map { " · ahora en \($0)" } ?? ""))
+        }
+      } else {
+        IdleItemView(item: .faro, state: state)
+      }
     case .clock:
       TimelineView(.periodic(from: .now, by: 15)) { ctx in
         text(ctx.date.formatted(.dateTime.hour(.defaultDigits(amPM: .omitted)).minute()), color: .white.opacity(0.8))

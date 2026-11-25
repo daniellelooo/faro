@@ -44,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   let mediaKeys = MediaKeyMonitor()
   let scroll = ScrollReverser()
   let mixer = AppVolumeMixer()
+  let activity = ActivityTracker()
   private var brewTimer: Timer?
 
   private var statusItem: NSStatusItem!
@@ -87,6 +88,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       self.overlay.showLiveNotice(.claude(n), seconds: 4.5)
     }
     claude.start()
+    activity.app = self
+    activity.start()
     clipboard.start()
     quick.onTimerFinished = { [weak self] in
       NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
@@ -207,6 +210,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
   func applicationWillTerminate(_ notification: Notification) {
     meetings.finishForQuit()
+    activity.save()
     music.stop()
     keyboard.stop()
     displays.restoreOnQuit()
