@@ -79,6 +79,8 @@ public struct ClaudeActivityBoard: Sendable {
     public var cwd: String? = nil
     /// Nombre del chat (el que se ve en la app de Claude); los avisos lo usan en vez del de la carpeta.
     public var title: String? = nil
+    /// Último mensaje escrito en la sesión: dice en qué chat está la persona (los eventos de herramientas no).
+    public var lastPrompt: Date? = nil
 
     public var displayName: String { title ?? project }
   }
@@ -114,6 +116,7 @@ public struct ClaudeActivityBoard: Sendable {
     defer { if e.name != "SessionEnd" { sessions[e.sessionID] = s } }
     switch e.name {
     case "UserPromptSubmit", "PreToolUse", "PostToolUse":
+      if e.name == "UserPromptSubmit" { s.lastPrompt = e.date }
       if s.state != .working {
         if s.state == .idle || s.workingSince == nil { s.workingSince = e.date }
         s.state = .working

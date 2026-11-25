@@ -70,6 +70,15 @@ import Testing
     #expect(board.sessions["s1"]?.state == .idle)
     #expect(board.workingCount == 0)
   }
+
+  @Test func soloElMensajeEscritoMarcaLaUltimaSesionUsada() {
+    var board = ClaudeActivityBoard()
+    let t = Date()
+    board.apply(HookEvent(name: "UserPromptSubmit", sessionID: "a", cwd: "/x/uno", date: t, message: nil))
+    board.apply(HookEvent(name: "PreToolUse", sessionID: "b", cwd: "/x/dos", date: t.addingTimeInterval(30), message: nil))
+    #expect(board.sessions["a"]?.lastPrompt == t)
+    #expect(board.sessions["b"]?.lastPrompt == nil)
+  }
 }
 
 @Suite struct ClaudeIntegrationTests {

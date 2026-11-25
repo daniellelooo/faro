@@ -77,9 +77,13 @@ public struct ActivitySample: Sendable {
   public var claudeTitle: String?
   /// Hay una reunión grabándose.
   public var inMeeting: Bool
+  /// La ventana al frente es privada o de incógnito (lo dice el navegador, no el título).
+  public var privateWindow = false
 
   public init(date: Date, bundleID: String?, app: String, title: String?, url: URL?, idle: TimeInterval,
-    mediaPlaying: Bool = false, claudeFolder: String? = nil, claudeTitle: String? = nil, inMeeting: Bool = false) {
+    mediaPlaying: Bool = false, claudeFolder: String? = nil, claudeTitle: String? = nil, inMeeting: Bool = false,
+    privateWindow: Bool = false) {
+    self.privateWindow = privateWindow
     self.date = date
     self.bundleID = bundleID
     self.app = app
@@ -106,6 +110,10 @@ public struct ActivityClassifier: Sendable {
     "disney+", "prime video"]
   public static let leisureHosts = ["youtube.com", "youtu.be", "netflix.com", "twitch.tv", "primevideo.com", "disneyplus.com",
     "max.com", "hbomax.com", "crunchyroll.com", "stremio.com"]
+  /// Navegadores: de ellos se lee la página activa por Accesibilidad.
+  public static let browsers: Set<String> = ["company.thebrowser.dia", "company.thebrowser.Browser", "com.google.Chrome",
+    "com.apple.Safari", "com.brave.Browser", "com.microsoft.edgemac", "org.mozilla.firefox", "com.operasoftware.Opera",
+    "com.vivaldi.Vivaldi", "com.kagi.kagimacOS", "app.zen-browser.zen", "com.google.Chrome.canary"]
   /// Apps donde se programa: con ellas al frente, el proyecto de Claude Code activo es el que se está trabajando.
   public static let codingApps = ["com.anthropic.claudefordesktop", "com.apple.Terminal", "com.googlecode.iterm2",
     "com.mitchellh.ghostty", "dev.warp.Warp-Stable", "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92",
@@ -322,7 +330,7 @@ public struct ActivityRecorder: Sendable {
   public func add(_ result: ActivityClassifier.Result?, sample s: ActivitySample, to spans: inout [ActivitySpan]) {
     guard let result else { return }
     let title = Self.clean(s.title).map { String($0.prefix(160)) }
-    var span = ActivityPrivacy.sanitize(ActivitySpan(start: s.date, end: s.date, bundleID: s.bundleID,
+    var span = ActivityPrivacy.sanitize(privateWindow: s.privateWindow, ActivitySpan(start: s.date, end: s.date, bundleID: s.bundleID,
       app: Self.clean(s.app) ?? s.app, title: title, host: s.url?.host, project: result.project, detail: result.detail,
       kind: result.kind), path: s.url?.path)
     if let last = spans.last, s.date.timeIntervalSince(last.end) <= maxGap {
@@ -386,15 +394,21 @@ public enum ActivityPrivacy {
     return false
   }
 
+  /// Dia y otros navegadores de The Browser Company identifican así sus ventanas privadas ("bigIncognitoBrowserWindow_…").
+  public static func isPrivateWindow(identifier: String?) -> Bool {
+    guard let i = identifier?.lowercased() else { return false }
+    return i.contains("incognito") || i.contains("private")
+  }
+
   public static func isIncognito(title: String?) -> Bool {
     guard let t = title?.lowercased() else { return false }
     return incognitoMarks.contains { t.contains($0) }
   }
 
   /// El tramo sin lo que no debe quedar registrado.
-  public static func sanitize(_ span: ActivitySpan, path: String? = nil) -> ActivitySpan {
+  public static func sanitize(privateWindow: Bool = false, _ span: ActivitySpan, path: String? = nil) -> ActivitySpan {
     var s = span
-    if isIncognito(title: s.title) {
+    if privateWindow || isIncognito(title: s.title) {
       s.title = "Ventana privada"
       s.host = nil
     } else if isPrivateApp(bundleID: s.bundleID, name: s.app) || isPrivate(host: s.host, path: path) {

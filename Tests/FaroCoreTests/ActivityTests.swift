@@ -111,6 +111,16 @@ struct ActivityTests {
     #expect(span.title == "Ventana privada" && span.host == nil)
   }
 
+  @Test func laVentanaPrivadaDeDiaSeReconocePorSuIdentificador() {
+    #expect(ActivityPrivacy.isPrivateWindow(identifier: "bigIncognitoBrowserWindow_8C23BC42"))
+    #expect(!ActivityPrivacy.isPrivateWindow(identifier: "bigBrowserWindow_8C23BC42"))
+    var spans: [ActivitySpan] = []
+    var smp = sample(0, app: "Dia", bundle: "company.thebrowser.dia", title: "Algo personal", url: "https://ejemplo.com/x")
+    smp.privateWindow = true
+    ActivityRecorder().add(ActivityClassifier(projects: projects).classify(smp), sample: smp, to: &spans)
+    #expect(spans.first?.title == "Ventana privada" && spans.first?.host == nil)
+  }
+
   @Test func loPrivadoTampocoSaleEnLoQueSeLeMandaAClaude() {
     let old = ActivitySpan(start: t0, end: t0.addingTimeInterval(600), bundleID: "net.whatsapp.WhatsApp", app: "WhatsApp",
       title: "Mamá", host: nil, project: nil, kind: .work)

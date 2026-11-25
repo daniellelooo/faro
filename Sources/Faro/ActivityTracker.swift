@@ -40,6 +40,7 @@ final class ActivityTracker {
   @ObservationIgnored private var lastSave = Date()
   @ObservationIgnored private let recorder = ActivityRecorder(maxGap: ActivityTracker.interval * 4)
   @ObservationIgnored private var rootCache: [String: String] = [:]
+  @ObservationIgnored private var urlCache: (pid: pid_t, title: String?, url: URL?)?
 
   static let transient: Set<String> = ["com.apple.UserNotificationCenter", "com.apple.notificationcenterui",
     "com.apple.controlcenter", "com.apple.Spotlight", "com.apple.dock", "com.apple.SecurityAgent", "com.apple.loginwindow",
@@ -110,30 +111,63 @@ final class ActivityTracker {
     let bundle = front?.bundleIdentifier
     var title: String?
     var url: URL?
+    var privateWindow = false
     if AXIsProcessTrusted(), pid > 0 {
-      title = PillVisibility.focusedWindowTitle(pid: pid)
-      if ToneResolver.isBrowser(bundle) {
+      let appElement = AXUIElementCreateApplication(pid)
+      AXUIElementSetMessagingTimeout(appElement, 0.25)
+      let window: AXUIElement? = AXReader.copy(appElement, kAXFocusedWindowAttribute)
+      if let window {
+        title = AXReader.copy(window, kAXTitleAttribute)
+        privateWindow = ActivityPrivacy.isPrivateWindow(identifier: AXReader.copy(window, "AXIdentifier"))
+      }
+      if let bundle, ActivityClassifier.browsers.contains(bundle), let window, !privateWindow {
         // Dia y Chrome solo muestran la página a Accesibilidad si se les pide.
-        AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), "AXManualAccessibility" as CFString, kCFBooleanTrue)
-        url = PillVisibility.focusedPageURL(pid: pid)
+        AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        url = pageURL(pid: pid, window: window, title: title)
       }
     }
     let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
     let session = recentClaudeSession(now)
     return ActivitySample(date: now, bundleID: bundle, app: front?.localizedName ?? "?", title: title, url: url, idle: idle,
       mediaPlaying: app?.music.current?.playing ?? false, claudeFolder: session?.folder, claudeTitle: session?.title,
-      inMeeting: app?.meetings.isRecording ?? false)
+      inMeeting: app?.meetings.isRecording ?? false, privateWindow: privateWindow)
   }
 
-  /// La sesión de Claude Code con actividad más reciente, si fue en los últimos 15 minutos.
+  /// La sesión de Claude Code donde se escribió por última vez, si fue en la última media hora. Se usa el último
+  /// mensaje y no el último evento: con varias sesiones trabajando a la vez, los eventos saltan de una a otra.
   private func recentClaudeSession(_ now: Date) -> (folder: String, title: String?)? {
     guard let sessions = app?.claude.board.sessions.values,
-      let s = sessions.filter({ now.timeIntervalSince($0.lastEvent) < 900 }).max(by: { $0.lastEvent < $1.lastEvent })
+      let s = sessions.filter({ now.timeIntervalSince($0.lastPrompt ?? .distantPast) < 1800 })
+        .max(by: { ($0.lastPrompt ?? .distantPast) < ($1.lastPrompt ?? .distantPast) })
     else { return nil }
     guard let cwd = s.cwd else { return (s.project, s.title) }
     let root = rootCache[cwd] ?? ProjectsService.repositoryRoot(for: cwd)
     rootCache[cwd] = root
     return (URL(fileURLWithPath: root).lastPathComponent, s.title)
+  }
+
+  /// La dirección de la página activa: se busca el área web en la ventana al frente y se lee su URL. Solo se vuelve
+  /// a buscar cuando cambia el título (otra pestaña u otra página), porque recorrer el árbol cuesta.
+  private func pageURL(pid: pid_t, window: AXUIElement, title: String?) -> URL? {
+    if let c = urlCache, c.pid == pid, c.title == title { return c.url }
+    var queue = [window]
+    var visited = 0
+    var found: URL?
+    while !queue.isEmpty, visited < 600 {
+      let e = queue.removeFirst()
+      visited += 1
+      if (AXReader.copy(e, kAXRoleAttribute) as String?) == "AXWebArea" {
+        var v: CFTypeRef?
+        if AXUIElementCopyAttributeValue(e, "AXURL" as CFString, &v) == .success, let v {
+          found = (v as? URL) ?? (v as? String).flatMap(URL.init(string:))
+          if found != nil { break }
+        }
+      }
+      if let children: [AXUIElement] = AXReader.copy(e, kAXChildrenAttribute) { queue.append(contentsOf: children) }
+    }
+    // Sin área web todavía (la página está cargando o Accesibilidad recién se activó): se reintenta en el siguiente.
+    if found != nil { urlCache = (pid, title, found) }
+    return found
   }
 
   // MARK: - Totales
