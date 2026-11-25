@@ -11,6 +11,7 @@ final class ActivityTracker {
   static let interval: TimeInterval = 5
   private static let projectsKey = "proyectosTiempo"
   private static let enabledKey = "registroTiempo"
+  private static let studyKey = "palabrasEstudio"
 
   let store = ActivityStore()
   /// Tramos de hoy, al día (la interfaz se actualiza con ellos).
@@ -20,6 +21,9 @@ final class ActivityTracker {
   private(set) var current: ActivityClassifier.Result?
   var projects: [TrackedProject] {
     didSet { UserDefaults.standard.set(try? JSONEncoder().encode(projects), forKey: Self.projectsKey) }
+  }
+  var studyWords: [String] {
+    didSet { UserDefaults.standard.set(studyWords, forKey: Self.studyKey) }
   }
   var enabled: Bool {
     didSet {
@@ -40,7 +44,7 @@ final class ActivityTracker {
   @ObservationIgnored private var lastSave = Date()
   @ObservationIgnored private let recorder = ActivityRecorder(maxGap: ActivityTracker.interval * 4)
   @ObservationIgnored private var rootCache: [String: String] = [:]
-  @ObservationIgnored private var urlCache: (pid: pid_t, title: String?, url: URL?)?
+  @ObservationIgnored private var pageCache: (pid: pid_t, title: String?, url: URL?, pageTitle: String?)?
 
   static let transient: Set<String> = ["com.apple.UserNotificationCenter", "com.apple.notificationcenterui",
     "com.apple.controlcenter", "com.apple.Spotlight", "com.apple.dock", "com.apple.SecurityAgent", "com.apple.loginwindow",
@@ -50,6 +54,7 @@ final class ActivityTracker {
     let d = UserDefaults.standard
     projects = d.data(forKey: Self.projectsKey).flatMap { try? JSONDecoder().decode([TrackedProject].self, from: $0) } ?? []
     enabled = d.object(forKey: Self.enabledKey) as? Bool ?? true
+    studyWords = d.stringArray(forKey: Self.studyKey) ?? ActivityClassifier.defaultStudyWords
     // Lo guardado antes de que existiera el filtro (o con listas viejas) se limpia al abrir.
     today = store.spans(day: dayKey).map { ActivityPrivacy.sanitize($0) }
     store.save(today, day: dayKey)
@@ -76,7 +81,9 @@ final class ActivityTracker {
   func save() { store.save(today, day: dayKey) }
 
   var classifier: ActivityClassifier {
-    ActivityClassifier(projects: projects, knownFolders: app?.claude.projects.projects.map(\.name) ?? [])
+    var c = ActivityClassifier(projects: projects, knownFolders: app?.claude.projects.projects.map(\.name) ?? [])
+    c.studyWords = studyWords
+    return c
   }
 
   // MARK: - Muestreo
@@ -123,7 +130,9 @@ final class ActivityTracker {
       if let bundle, ActivityClassifier.browsers.contains(bundle), let window, !privateWindow {
         // Dia y Chrome solo muestran la página a Accesibilidad si se les pide.
         AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
-        url = pageURL(pid: pid, window: window, title: title)
+        let page = page(pid: pid, window: window, title: title)
+        url = page.url
+        if let t = page.title { title = t }
       }
     }
     let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
@@ -146,28 +155,30 @@ final class ActivityTracker {
     return (URL(fileURLWithPath: root).lastPathComponent, s.title)
   }
 
-  /// La dirección de la página activa: se busca el área web en la ventana al frente y se lee su URL. Solo se vuelve
-  /// a buscar cuando cambia el título (otra pestaña u otra página), porque recorrer el árbol cuesta.
-  private func pageURL(pid: pid_t, window: AXUIElement, title: String?) -> URL? {
-    if let c = urlCache, c.pid == pid, c.title == title { return c.url }
+  /// La dirección y el título completo de la página activa: se busca el área web en la ventana al frente. Solo se
+  /// vuelve a buscar cuando cambia el título de la ventana (otra pestaña u otra página), porque recorrer el árbol cuesta.
+  /// El título de la página va completo; el de la ventana de Dia viene recortado ("PERSONAL: Curso de Sw…").
+  private func page(pid: pid_t, window: AXUIElement, title: String?) -> (url: URL?, title: String?) {
+    if let c = pageCache, c.pid == pid, c.title == title { return (c.url, c.pageTitle) }
     var queue = [window]
     var visited = 0
-    var found: URL?
     while !queue.isEmpty, visited < 600 {
       let e = queue.removeFirst()
       visited += 1
       if (AXReader.copy(e, kAXRoleAttribute) as String?) == "AXWebArea" {
         var v: CFTypeRef?
-        if AXUIElementCopyAttributeValue(e, "AXURL" as CFString, &v) == .success, let v {
-          found = (v as? URL) ?? (v as? String).flatMap(URL.init(string:))
-          if found != nil { break }
+        if AXUIElementCopyAttributeValue(e, "AXURL" as CFString, &v) == .success, let v,
+          let url = (v as? URL) ?? (v as? String).flatMap(URL.init(string:)) {
+          let pageTitle: String? = AXReader.copy(e, kAXTitleAttribute)
+          let found = (url, pageTitle?.isEmpty == false ? pageTitle : nil)
+          pageCache = (pid, title, found.0, found.1)
+          return found
         }
       }
       if let children: [AXUIElement] = AXReader.copy(e, kAXChildrenAttribute) { queue.append(contentsOf: children) }
     }
     // Sin área web todavía (la página está cargando o Accesibilidad recién se activó): se reintenta en el siguiente.
-    if found != nil { urlCache = (pid, title, found) }
-    return found
+    return (nil, nil)
   }
 
   // MARK: - Totales

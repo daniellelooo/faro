@@ -100,6 +100,8 @@ public struct ActivitySample: Sendable {
 /// Decide si un instante es trabajo, ocio o nada (lejos del computador), y de qué proyecto.
 public struct ActivityClassifier: Sendable {
   public var projects: [TrackedProject]
+  /// Palabras que, en el título de un video, lo vuelven estudio (cuenta como trabajo aunque sea en YouTube).
+  public var studyWords: [String] = ActivityClassifier.defaultStudyWords
   /// Carpetas de proyectos conocidos (los de Claude Code), para reconocerlos sin configurar nada.
   public var knownFolders: [String]
   /// Sin tocar nada durante más de esto ya no se cuenta, salvo que esté sonando un video al frente o haya reunión.
@@ -110,6 +112,10 @@ public struct ActivityClassifier: Sendable {
     "disney+", "prime video"]
   public static let leisureHosts = ["youtube.com", "youtu.be", "netflix.com", "twitch.tv", "primevideo.com", "disneyplus.com",
     "max.com", "hbomax.com", "crunchyroll.com", "stremio.com"]
+  public static let defaultStudyWords = ["curso", "cursos", "course", "tutorial", "tutoriales", "clase", "clases",
+    "lecture", "aprende", "aprender", "learn", "explicado", "explained", "how to", "desde cero", "crash course",
+    "masterclass", "bootcamp", "conferencia", "ejercicios", "parcial", "examen", "documentación", "paso a paso"]
+
   /// Navegadores: de ellos se lee la página activa por Accesibilidad.
   public static let browsers: Set<String> = ["company.thebrowser.dia", "company.thebrowser.Browser", "com.google.Chrome",
     "com.apple.Safari", "com.brave.Browser", "com.microsoft.edgemac", "org.mozilla.firefox", "com.operasoftware.Opera",
@@ -137,9 +143,21 @@ public struct ActivityClassifier: Sendable {
       // Un video al frente sigue contando aunque no se toque nada; el resto es estar lejos.
       guard leisure, s.mediaPlaying else { return nil }
     }
-    if leisure { return Result(kind: .leisure, project: nil, detail: nil) }
+    if leisure {
+      // Un video de estudio, o uno que nombra algo de un proyecto, cuenta como trabajo.
+      if let title = s.title?.lowercased(), isVideoSite(s), studyWords.contains(where: { matches($0, in: title) }) || project(for: s) != nil {
+        return Result(kind: .work, project: project(for: s), detail: nil)
+      }
+      return Result(kind: .leisure, project: nil, detail: nil)
+    }
     let coding = s.bundleID.map(Self.codingApps.contains) ?? false
     return Result(kind: .work, project: project(for: s), detail: coding ? s.claudeTitle : nil)
+  }
+
+  /// Una página de un sitio de video (no una app de series ni un juego).
+  func isVideoSite(_ s: ActivitySample) -> Bool {
+    guard let host = s.url?.host?.lowercased() else { return false }
+    return Self.leisureHosts.contains { host == $0 || host.hasSuffix("." + $0) }
   }
 
   public func isLeisure(_ s: ActivitySample) -> Bool {

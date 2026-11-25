@@ -482,6 +482,18 @@ struct ProjectsEditor: View {
                 .help("Quitar")
             }
           }
+          VStack(alignment: .leading, spacing: 4) {
+            Text("Videos de estudio").font(.subheadline.weight(.semibold))
+            TextField("Palabras, separadas por comas", text: Binding(
+              get: { tracker.studyWords.joined(separator: ", ") },
+              set: { tracker.studyWords = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }),
+              axis: .vertical)
+              .textFieldStyle(.roundedBorder)
+              .lineLimit(2...4)
+            Text("Un video de YouTube (u otro sitio de video) cuyo título tenga una de estas palabras, o algo de uno de tus proyectos, cuenta como trabajo.")
+              .font(.caption).foregroundStyle(.secondary)
+          }
+          .padding(.top, 4)
           HStack {
             Button {
               let color = TrackedProject.palette[tracker.projects.count % TrackedProject.palette.count]
@@ -490,7 +502,7 @@ struct ProjectsEditor: View {
             Spacer()
             Toggle("Registrar mi tiempo", isOn: $tracker.enabled).toggleStyle(.switch).controlSize(.small)
           }
-          Text("Ocio es Stremio, sitios de video (YouTube, Netflix, Twitch) y juegos cuando están al frente; un video de fondo mientras trabajas en otra app cuenta como trabajo. Sin tocar nada por 3 minutos deja de contar. Al resumir, a Claude solo van títulos de ventanas, dominios y tiempos.")
+          Text("Ocio es Stremio, sitios de video (YouTube, Netflix, Twitch) salvo los de estudio, y juegos cuando están al frente; un video de fondo mientras trabajas en otra app cuenta como trabajo. Sin tocar nada por 3 minutos deja de contar. Al resumir, a Claude solo van títulos de ventanas, dominios y tiempos.")
             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
       }

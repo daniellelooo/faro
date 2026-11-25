@@ -51,6 +51,17 @@ struct ActivityTests {
     #expect(c.classify(sample(0, media: true))?.kind == .work)
   }
 
+  @Test func unVideoDeEstudioOdeUnProyectoCuentaComoTrabajo() {
+    let c = ActivityClassifier(projects: projects)
+    let yt = { (t: String) in self.sample(0, app: "Dia", bundle: "company.thebrowser.dia", title: t, url: "https://www.youtube.com/watch?v=1") }
+    #expect(c.classify(yt("Curso de SwiftUI desde cero - Clase 3 - YouTube"))?.kind == .work)
+    #expect(c.classify(yt("How to deploy Next.js - YouTube"))?.kind == .work)
+    #expect(c.classify(yt("Cómo armé el producto en un mes"))?.project == "Producto")
+    #expect(c.classify(yt("Reaccionando a videos virales"))?.kind == .leisure)
+    // Las apps de series siguen siendo ocio aunque el título diga "clase".
+    #expect(c.classify(sample(0, app: "Stremio", bundle: nil, title: "La clase de 1984"))?.kind == .leisure)
+  }
+
   @Test func sinTocarNadaNoCuentaSalvoUnVideoAlFrenteOUnaReunion() {
     let c = ActivityClassifier(projects: projects)
     #expect(c.classify(sample(0, idle: 600)) == nil)
